@@ -1,4 +1,4 @@
-# Orion: Part 1 v6 (faster, hears better, smarter, online)
+# Orion: Part 1 v7 (a living hologram, star-map memory, timers, sounds)
 
 Your personal AI companion. A holographic core floats in the corner of your screen, talks in an expressive
 voice, remembers you, learns who you are, sees what you attach, and grows over time. Tools (web, screen control, coding)
@@ -86,7 +86,44 @@ It shares your tab titles and addresses with Orion while Orion runs, and sends a
 pick that tab. It never reads tabs on its own. On macOS, Safari and Chrome-family tabs can also be listed without
 the extension (macOS will ask permission); those pages are fetched from the web, so logged-in pages need a screenshot.
 
-## New in v6
+## New in v7: the show
+**The hologram is now a presence, not a picture.**
+- **He looks at you.** His whole body turns to follow your cursor, and when nobody is around he glances about on his own.
+  He dims and slows at night and drifts into a sleepy glow if you leave him alone for ten minutes.
+- **Boot sequence.** At launch particles stream in from the dark and snap into place, a console types out
+  `> ORION CORE ONLINE / MEMORY 63 FACTS / BRAIN ... / ALL SYSTEMS NOMINAL`, and a rising chime plays.
+- **A voice ring.** A circular audio visualiser around the core draws his voice (and yours) as bars: bass at the bottom,
+  mids at the sides, highs on top. Shockwaves roll out when he hears you or when a reminder fires.
+- **Lightning while he thinks.** Jagged bolts crackle across the sphere.
+- **The constellation Orion** hangs behind him, drawn star by star. Its three belt stars chase each other like a loading light while he thinks.
+- **Six themes:** `arc` (blue), `ember` (orange), `aurora` (green), `nebula` (violet), `crimson` (red), `ghost` (silver).
+  Type `/theme ember` or use the menu. The chat panel's colours follow, and he remembers your choice.
+
+**The panel has three screens** (tabs under the header):
+- **CHAT:** now shows what he is doing as he does it (`◈ Checking the weather: Malibu`), and a live weather card.
+  Type `/` for a command menu.
+- **MIND:** his memory as a night sky. Every fact and note is a star (colour = kind of memory, size = importance),
+  linked memories form constellations, and a new memory flares up when it is born. Hover a star to read it.
+- **STATUS:** clock, CPU / memory / battery gauges, his counters (facts, lessons, notes, days together), which brain is in use,
+  and live countdown rings for your timers and reminders.
+
+**New abilities**
+- **Timers and reminders:** "set a timer for 10 minutes for the pasta", "remind me at 5:30 to call Maya", "remind me tomorrow at 9 to send
+  the invoice". They survive restarts, and one that came due while he was off is delivered when he wakes. He speaks them,
+  plays a chime and sends a shockwave. `/timer 10m tea`, `/remind 5pm call mom`.
+- **Briefing:** `/brief` or "catch me up": time, weather at home, headlines, reminders, in a few warm sentences.
+  Set `home_city` in `config.yaml` for the weather.
+- **Sound design:** every sound is synthesised, no files: boot sweep, listening blip, thinking tick, reminder chime, error tone.
+  Quiet by default. `ui.sounds: false` or `ui.sound_volume`.
+
+**Mac polish** (everything is optional and fails quietly on other systems)
+- Lives in the menu bar with no Dock icon, and stays visible on every Space and above full-screen apps
+  (installed automatically through `pyobjc`).
+- **Global hotkey** Ctrl+Option+O opens him from anywhere (`ui.hotkey`; needs Accessibility permission for the app that runs
+  Orion: System Settings > Privacy & Security > Accessibility; blank the setting to switch it off).
+- The microphone and screenshot permissions are asked by macOS the first time they are used.
+
+## Earlier: v6
 **Faster.** He now starts talking after the first sentence of his answer, while the rest is still being written,
 and the next sentence is already being voiced while the current one plays, so there are no gaps. When he needs a
 tool he says a short line ("Let me check.") first. Tools run side by side. Memory tidying no longer blocks the next turn.

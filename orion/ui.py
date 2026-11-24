@@ -10,51 +10,26 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient, QDesktopServices, QFont, QFontMetrics, QIcon,
+from PySide6.QtGui import (QAction, QCursor, QBrush, QColor, QConicalGradient, QDesktopServices, QFont, QFontMetrics, QIcon,
                            QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
                            QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget, QCompleter)
 
 from . import attachments as att
 from . import sources
-from .hologram import Hologram
+from .hologram import THEMES, Hologram
 from .mood import EMOTIONS
+from .platform_tweaks import Hotkey, mac_menubar_app, show_on_all_spaces
+from .sounds import Sounds
+from .uikit import cpen, hud_font, lerp, rgba
+from .ui_views import MindView, StatusView, WeatherCard
 
 EXT_DIR = Path(__file__).resolve().parents[1] / "extension"
 BASE = QColor("#3d8bff")
 VIOLET = QColor("#8a5cff")
 ICE = QColor(190, 225, 255)
 GREY = QColor("#6b7280")
-HUD_FONTS = ["Bahnschrift", "Segoe UI", "SF Pro Display", "Helvetica Neue", "Arial"]
-
-
-def rgba(c, a):
-    q = QColor(c)
-    q.setAlpha(max(0, min(255, int(a))))
-    return q
-
-
-def lerp(a, b, k):
-    return QColor(int(a.red() + (b.red() - a.red()) * k), int(a.green() + (b.green() - a.green()) * k),
-                  int(a.blue() + (b.blue() - a.blue()) * k))
-
-
-def cpen(color, width):
-    p = QPen(color, width)
-    p.setCosmetic(True)
-    return p
-
-
-def hud_font(px, spacing=0.0, weight=QFont.Normal, italic=False):
-    f = QFont()
-    f.setFamilies(HUD_FONTS)
-    f.setPixelSize(px)
-    f.setWeight(weight)
-    f.setItalic(italic)
-    if spacing:
-        f.setLetterSpacing(QFont.AbsoluteSpacing, spacing)
-    return f
 
 
 class UiBridge(QObject):
@@ -88,6 +63,8 @@ class OrbWidget(QWidget):
         self._pulse = 0.0
         self._last_level = 0.0
         self._ms, self._frames = 0.0, 0
+        self.theme = "arc"
+        self._booted = False
         self._resize()
         self._build_holo()
         self.last = time.monotonic()
@@ -103,8 +80,16 @@ class OrbWidget(QWidget):
     def _build_holo(self):
         q = self.quality
         self.holo = Hologram(int(self.width() * q), int(self.height() * q), self.S * q * 0.30, detail=self.detail)
+        self.holo.set_theme(self.theme)
         self.holo.set_tint(self._tint())
+        if self._booted:
+            self.holo.boot = 1.0                 # only the very first build plays the assemble animation
+        self._booted = True
         self._img = None
+
+    def set_theme(self, name):
+        self.theme = name
+        self.holo.set_theme(name)
 
     def _tint(self):
         c = QColor(EMOTIONS[self.emotion][2])
@@ -223,6 +208,7 @@ class SignalBars(QWidget):
 
 class HudFrame(QFrame):
     CUT = 20
+    ACCENT = QColor("#5aa8ff")
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -240,11 +226,11 @@ class HudFrame(QFrame):
         g.setColorAt(0, QColor(7, 14, 34, 242))
         g.setColorAt(1, QColor(4, 9, 24, 246))
         p.fillPath(path, g)
-        p.setPen(QPen(QColor(47, 139, 255, 55), 6))
+        p.setPen(QPen(rgba(self.ACCENT, 55), 6))
         p.drawPath(path)
-        p.setPen(QPen(QColor(72, 160, 255, 215), 1.3))
+        p.setPen(QPen(rgba(self.ACCENT, 215), 1.3))
         p.drawPath(path)
-        p.setPen(QPen(QColor(130, 215, 255, 255), 2.6))
+        p.setPen(QPen(self.ACCENT.lighter(150), 2.6))
         for (x1, y1, x2, y2) in ((0.75, c, 0.75, c + 30), (c, 0.75, c + 30, 0.75), (w, h - c, w, h - c - 30),
                                  (w - c, h, w - c - 30, h), (w, 0.75, w - 22, 0.75), (w, 0.75, w, 22),
                                  (0.75, h, 22, h), (0.75, h, 0.75, h - 22)):
@@ -286,6 +272,10 @@ QPushButton#plus:hover { background: rgba(90,170,255,90); color: white; }
 QPushButton#send { background: #4a9bff; color: #04112b; border: none; border-radius: 4px; padding: 8px 16px;
                    font-weight: 700; letter-spacing: 1px; }
 QPushButton#send:hover { background: white; }
+QPushButton#tab { background: transparent; color: #7f9cc8; border: none; border-bottom: 2px solid transparent;
+                  padding: 4px 10px; font-size: 10px; letter-spacing: 2px; }
+QPushButton#tab:hover { color: white; }
+QPushButton#tab:checked { color: #dff0ff; border-bottom: 2px solid #5aa8ff; }
 QPushButton#x { background: transparent; color: #9fb4d8; border: none; font-size: 13px; padding: 0 2px; }
 QPushButton#x:hover { color: #ff9a9a; }
 QLineEdit { background: rgba(70,150,255,22); color: #f2f7ff; border: 1px solid rgba(90,170,255,100);
@@ -379,6 +369,19 @@ class ChatPanel(HudFrame):
             row2.addWidget(b)
         root.addLayout(row2)
 
+        tabs = QHBoxLayout()
+        tabs.setSpacing(4)
+        self.tab = 0
+        self.tab_btns = []
+        for i, label in enumerate(("CHAT", "MIND", "STATUS")):
+            tb = QPushButton(label)
+            tb.setObjectName("tab")
+            tb.setCheckable(True)
+            tb.clicked.connect(partial(self.set_tab, i))
+            tabs.addWidget(tb)
+            self.tab_btns.append(tb)
+        tabs.addStretch(1)
+        root.addLayout(tabs)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -391,7 +394,14 @@ class ChatPanel(HudFrame):
         self.v.setSpacing(8)
         self.v.addStretch(1)
         self.scroll.setWidget(inner)
-        root.addWidget(self.scroll, 1)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.scroll)
+        self.mind = MindView(host.core, accent)
+        self.status = StatusView(host.core, accent)
+        self.stack.addWidget(self.mind)
+        self.stack.addWidget(self.status)
+        root.addWidget(self.stack, 1)
+        self.tab_btns[0].setChecked(True)
         who = f", {user_name.upper()}" if user_name else ""
         self._empty = hud_label(f"HOW CAN I HELP YOU{who}?", 12, 2.0, "#5e86c0")
         self._empty.setAlignment(Qt.AlignCenter)
@@ -430,10 +440,43 @@ class ChatPanel(HudFrame):
         row.addWidget(self.plus)
         row.addWidget(self.input, 1)
         row.addWidget(send)
-        root.addLayout(row)
+        self.rowW = QWidget()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.rowW.setLayout(row)
+        root.addWidget(self.rowW)
+        self.completer = QCompleter(["/brief", "/timer ", "/remind ", "/study ", "/theme ", "/mind", "/status", "/memory",
+                                     "/profile", "/journal", "/forget ", "/token", "/help"], self.input)
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer.popup().setStyleSheet(MENU_QSS)
+        self.input.setCompleter(self.completer)
 
         self.attachReady.connect(lambda a: self.add_items([a]))
         self.notice.connect(lambda t: self.add_message("system", t))
+
+    # ----- tabs, theme, cards -----
+    def set_tab(self, i):
+        self.tab = i
+        self.stack.setCurrentIndex(i)
+        for k, b in enumerate(self.tab_btns):
+            b.setChecked(k == i)
+        self.chipbar.setVisible(i == 0 and bool(self.pending))
+        self.rowW.setVisible(i == 0)
+        self.host.refit()
+
+    def set_accent(self, hex_):
+        self.accent = hex_
+        self.ACCENT = QColor(hex_)
+        self.setStyleSheet(STYLE.replace("#5aa8ff", hex_).replace("#4a9bff", hex_))
+        self.mind.set_accent(hex_)
+        self.status.set_accent(hex_)
+        self.update()
+
+    def add_card(self, widget):
+        if self._empty is not None:
+            self._empty.deleteLater()
+            self._empty = None
+        self.v.insertWidget(self.v.count() - 1, widget, 0, Qt.AlignLeft)
+        QTimer.singleShot(60, lambda: self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum()))
 
     # ----- header state -----
     def set_state(self, state, mood=""):
@@ -486,7 +529,7 @@ class ChatPanel(HudFrame):
             x.clicked.connect(partial(self._remove, i))
             h.addWidget(x)
             self.chips.insertWidget(self.chips.count() - 1, chip)
-        self.chipbar.setVisible(bool(self.pending))
+        self.chipbar.setVisible(bool(self.pending) and self.tab == 0)
         self.host.refit()
 
     def _remove(self, i):
@@ -695,7 +738,17 @@ class Overlay(QWidget):
         self.setWindowOpacity(float(u.get("opacity", 0.98)))
         self.setWindowTitle(self.name)
 
+        self.sounds = Sounds(u.get("sounds", True), u.get("sound_volume", 0.35))
+        self.theme = core.mem.jget("ui_theme", None) or u.get("theme", "arc")
+        if self.theme not in THEMES:
+            self.theme = "arc"
         self.orb = OrbWidget(int(u.get("orb_size", 150)), self.accent, u.get("quality", 1.25))
+        self.orb.theme = self.theme
+        self.orb.holo.set_theme(self.theme)
+        self.accent = THEMES[self.theme][3]
+        self._last_active = time.monotonic()
+        self._weather_line = ""
+        self._boot_text, self._boot_i = "", 0
         self.caption = QLabel("")
         self.caption.setWordWrap(True)
         self.caption.hide()
@@ -721,11 +774,85 @@ class Overlay(QWidget):
         self.orb.setContextMenuPolicy(Qt.CustomContextMenu)
         self.orb.customContextMenuRequested.connect(self._menu)
         ubridge.event.connect(self.on_event)
+        self.panel.set_accent(self.accent)
+
+        self.look_timer = QTimer(self)                       # he follows your cursor with his gaze, and gets sleepy when idle
+        self.look_timer.timeout.connect(self._look_tick)
+        self.look_timer.start(60)
+        self.boot_timer = QTimer(self)
+        self.boot_timer.timeout.connect(self._boot_step)
+        self.hotkey = None
+        combo = u.get("hotkey", "<ctrl>+<alt>+o")
+        if combo:
+            self.hotkey = Hotkey(combo, lambda: ubridge.emit_event("hotkey"))
+        QTimer.singleShot(600, lambda: show_on_all_spaces(self))
 
         self._tray()
         self._fit()
         if u.get("start_expanded", False):
             self.toggle_panel()
+
+    # ----- theme, gaze, boot -----
+    def apply_theme(self, name, save=True):
+        if name not in THEMES:
+            return False
+        self.theme = name
+        self.accent = THEMES[name][3]
+        self.orb.set_theme(name)
+        self.panel.set_accent(self.accent)
+        if save:
+            self.core.mem.jset("ui_theme", name)
+        return True
+
+    def _look_tick(self):
+        now = time.monotonic()
+        scr = self._screen().geometry()
+        cur = QCursor.pos()
+        c = self.orb.mapToGlobal(self.orb.rect().center())
+        dx = (cur.x() - c.x()) / (scr.width() * 0.35)
+        dy = (cur.y() - c.y()) / (scr.height() * 0.35)
+        if (cur - getattr(self, "_last_cur", cur)).manhattanLength() > 2:
+            self._last_active = now
+        self._last_cur = cur
+        idle = now - self._last_active
+        if idle > 25:                                        # nobody around: a slow, curious glance
+            dx, dy = 0.5 * math.sin(now * 0.21), 0.3 * math.sin(now * 0.17 + 1)
+        self.orb.holo.set_look(dx, -dy)
+        hour = time.localtime().tm_hour
+        e = 0.62 if (hour >= 23 or hour < 6) else 1.0
+        if idle > 600:
+            e = min(e, 0.58)                                 # drifts into a dim, slow sleep
+        self.orb.holo.energy += (e - self.orb.holo.energy) * 0.02
+
+    def show_boot(self):
+        try:
+            st = self.core.status()
+            m = st["memory"]
+            lines = [f"> {self.name.upper()} CORE ONLINE", f"> MEMORY  {m.get('facts', 0)} FACTS  {m.get('notes', 0)} NOTES",
+                     f"> BRAIN   {str(st.get('brain', '?')).upper()}", f"> VOICE   {'READY' if st.get('voice') else 'TEXT ONLY'}",
+                     f"> MIC     {'LISTENING' if st.get('listening') else 'OFF'}", "> ALL SYSTEMS NOMINAL"]
+        except Exception:
+            lines = [f"> {self.name.upper()} CORE ONLINE"]
+        self._boot_text, self._boot_i = "\n".join(lines), 0
+        self.boot_timer.start(22)
+
+    def _boot_step(self):
+        self._boot_i += 2
+        txt = self._boot_text[:self._boot_i]
+        if not self.panel.isVisible():
+            font = hud_font(11, 1.2, mono=True)
+            self.caption.setFont(font)
+            self.caption.setStyleSheet("background: rgba(4,10,26,225); border: 1px solid " + self.accent +
+                                       "; border-radius: 4px; padding: 8px 12px; color: #9fe0ff;")
+            self.caption.setText(txt + ("█" if self._boot_i < len(self._boot_text) else ""))
+            self.caption.setFixedWidth(270)
+            fm = QFontMetrics(font)
+            self.caption.setFixedHeight(fm.lineSpacing() * (txt.count("\n") + 1) + 22)
+            self.caption.show()
+            self._fit()
+        if self._boot_i >= len(self._boot_text):
+            self.boot_timer.stop()
+            self.cap_timer.start(3500)
 
     # ----- layout and position -----
     def _relayout(self):
@@ -836,7 +963,16 @@ class Overlay(QWidget):
 
     # ----- events from the engine -----
     def on_event(self, kind, d):
-        if kind == "state":
+        if kind == "ready":
+            self.sounds.play("boot")
+            QTimer.singleShot(500, self.show_boot)
+        elif kind == "state":
+            if d["state"] != self._state:
+                self._last_active = time.monotonic()
+                if d["state"] == "listening":
+                    self.sounds.play("wake")
+                elif d["state"] == "thinking":
+                    self.sounds.play("think")
             self._state = d["state"]
             self.orb.set_state(self._state)
             self.panel.set_state(self._state, self._mood_text or self._emotion)
@@ -845,6 +981,7 @@ class Overlay(QWidget):
             self.panel.bars.set_level(d["value"])
         elif kind == "hearing":
             self.orb.hear()
+            self.orb.holo.shockwave(1)
         elif kind == "mood":
             self._emotion = d["emotion"]
             self._mood_text = d.get("mood", "")
@@ -861,9 +998,24 @@ class Overlay(QWidget):
                 self.panel.add_message("bot", text)
             if d.get("speech"):
                 self.show_caption(d["speech"])
+        elif kind == "tool":
+            self._on_tool(d)
+        elif kind == "reminder":
+            self.sounds.play("alert")
+            self.orb.holo.shockwave(3)
+            self.orb.hear()
+            if not self.panel.isVisible():
+                self.show_caption(d.get("text", ""))
+        elif kind == "command":
+            self._command(d.get("name"), d.get("arg", ""))
+        elif kind == "hotkey":
+            self.toggle_panel()
+            self.raise_()
+            self.activateWindow()
         elif kind == "system":
             self.panel.add_message("system", d.get("text", ""))
             if d.get("level") == "error":
+                self.sounds.play("error")
                 self.panel.set_system("ATTENTION", ok=False)
                 self.show_caption(d.get("text", ""), muted=True)
         elif kind == "confirm":
@@ -872,6 +1024,42 @@ class Overlay(QWidget):
             d["done"].set()
         elif kind == "quit":
             QApplication.quit()
+
+    TOOL_VERB = {"web_search": "Searching the web", "read_page": "Reading a page", "wikipedia": "Checking Wikipedia",
+                 "weather": "Checking the weather", "news": "Reading the news", "arxiv": "Searching papers",
+                 "define": "Looking up a word", "exchange": "Converting currency", "calculate": "Calculating",
+                 "study": "Studying", "set_timer": "Setting a timer", "set_reminder": "Setting a reminder",
+                 "list_reminders": "Checking reminders", "cancel_reminder": "Cancelling a reminder",
+                 "briefing": "Gathering your briefing", "remember": "Remembering that", "recall": "Recalling",
+                 "forget": "Forgetting", "learn": "Learning from that", "save_note": "Saving a note",
+                 "get_time": "Checking the time"}
+
+    def _on_tool(self, d):
+        name, args = d.get("name", ""), d.get("args") or {}
+        verb = self.TOOL_VERB.get(name, name.replace("_", " ").capitalize())
+        detail = next((str(v) for v in args.values() if isinstance(v, str) and v), "")
+        line = f"◈ {verb}" + (f": {trunc(detail, 38)}" if detail else "") + (" (failed)" if d.get("error") else "")
+        self.panel.add_message("system", line)
+        if not self.panel.isVisible():
+            self.show_caption(verb + "...", muted=True)
+        res = d.get("result")
+        if name == "weather" and isinstance(res, dict) and res.get("now"):
+            self.panel.add_card(WeatherCard(res, self.accent))
+            self._weather_line = f"{res['place'].split(',')[0]}  {res['now']['temperature']}  {res['now']['conditions']}"
+            self.panel.status.set_weather(self._weather_line)
+
+    def _command(self, name, arg):
+        if name == "theme":
+            if not arg:
+                self.panel.add_message("system", "Themes: " + ", ".join(THEMES) + f". Now: {self.theme}. Try /theme ember")
+            elif self.apply_theme(arg.lower().strip()):
+                self.panel.add_message("system", f"Theme set to {self.theme}.")
+            else:
+                self.panel.add_message("system", "I don't know that theme. Choose from: " + ", ".join(THEMES))
+        elif name in ("mind", "status"):
+            if not self.panel.isVisible():
+                self.toggle_panel()
+            self.panel.set_tab(1 if name == "mind" else 2)
 
     # ----- tray and menu -----
     def _tray(self):
@@ -890,6 +1078,11 @@ class Overlay(QWidget):
             act = QAction("Mute microphone", m, checkable=True)
             act.toggled.connect(self.core.set_mic_muted)
             m.addAction(act)
+        themes = m.addMenu("Theme")
+        for t in THEMES:
+            themes.addAction(t.capitalize(), lambda t=t: self.apply_theme(t))
+        m.addAction("Mind (memory star-map)", lambda: self._command("mind", ""))
+        m.addAction("Status", lambda: self._command("status", ""))
         corner = m.addMenu("Move to corner")
         for c in self.CORNERS:
             corner.addAction(c.replace("-", " "), lambda c=c: self._set_corner(c))
@@ -917,6 +1110,7 @@ def run_ui(cfg):
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(cfg.get("assistant_name", "Orion"))
+    mac_menubar_app()
     ubridge = UiBridge()
 
     def confirm(question):

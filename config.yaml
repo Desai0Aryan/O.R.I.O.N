@@ -57,7 +57,11 @@ ui:
   quality: 1.25            # 1.0 = fastest, up to 2.0 = sharpest (it also lowers itself on slow computers)
   margin: 24
   opacity: 0.98
-  accent: "#5aa8ff"        # colour of your message bubbles
+  theme: arc               # arc | ember | aurora | nebula | crimson | ghost  (switch any time with /theme ember)
+  accent: "#5aa8ff"        # fallback colour (the theme sets it)
+  sounds: true             # soft synthesised sounds: boot, listening, thinking, reminders
+  sound_volume: 0.35
+  hotkey: "<ctrl>+<alt>+o"  # global shortcut to open Orion from anywhere (needs the pynput package; blank = off)
   captions: true           # live subtitles of what he says
   start_expanded: false
 

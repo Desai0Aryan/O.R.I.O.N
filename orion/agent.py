@@ -230,6 +230,8 @@ class Agent:
         self.on_speech = on_speech          # on_speech(sentence, emotion): speak while the reply is still streaming
         self._compact_ready = None
         self._compacting = False
+        self.on_tool = None                 # on_tool(name, args, result): lets the screen show what he is doing
+        self.clock = None
         self.brain = Brain(cfg)
         self.mood = Mood(memory)
         self.history = []
@@ -271,9 +273,15 @@ class Agent:
         if name not in self.tools:
             return {"tool": name, "error": "unknown tool"}
         try:
-            return {"tool": name, "result": self.tools[name][0](**args)}
+            out = {"tool": name, "result": self.tools[name][0](**args)}
         except Exception as e:
-            return {"tool": name, "error": f"{type(e).__name__}: {e}"}
+            out = {"tool": name, "error": f"{type(e).__name__}: {e}"}
+        if self.on_tool:
+            try:
+                self.on_tool(name, args, out.get("result"), out.get("error"))
+            except Exception:
+                pass
+        return out
 
     # ---------- character ----------
     def traits(self):

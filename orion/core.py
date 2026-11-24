@@ -13,9 +13,17 @@ from .memory import Memory
 from .memory import DATA
 from .wake import find_wake, strip_wake
 
-HELP = ("Commands: /memory (what I know about you), /profile (how I understand you), "
-        "/journal (my recent reflections), /forget <text> (delete memories containing that text), "
-        "/token (connect the browser extension), /help")
+HELP = ("Commands: /brief (your day at a glance), /timer 10m tea, /remind 5pm call mom, /study <topic>, "
+        "/theme <arc|ember|aurora|nebula|crimson|ghost>, /mind (my memory star-map), /status, /memory, /profile, "
+        "/journal, /forget <text>, /token (connect the browser extension), /help")
+
+# slash commands that simply become a request to the agent
+PROMPTS = {
+    "brief": "Give me my briefing: the time, the weather at home, the top headlines and any reminders. Keep it short and warm.",
+    "timer": "Set a timer: {arg}",
+    "remind": "Set a reminder: {arg}",
+    "study": "Study this on the internet and remember what you learn: {arg}",
+}
 
 
 class Core:
@@ -53,6 +61,7 @@ class Core:
         self._state = "idle"
         self.active_until = 0.0
         self._shut = False
+        self.agent.on_tool = self._on_tool
 
     # ---------- plumbing ----------
     def emit(self, kind, **kw):
@@ -94,6 +103,9 @@ class Core:
         if self.voice and self.speak_enabled and reply["speech"] and not reply.get("streamed"):
             self.voice.speak(reply["speech"], reply["emotion"])
 
+    def _on_tool(self, name, args, result, error):
+        self.emit("tool", name=name, args=args, result=result, error=error)
+
     def _on_speech(self, sentence, emotion):
         """A finished sentence of a reply that is still being written: speak it right away."""
         self.voice.speak(sentence, emotion)
@@ -104,6 +116,7 @@ class Core:
         if self.listen_enabled and self.voice:
             threading.Thread(target=self._listen_loop, daemon=True).start()
         threading.Thread(target=self._greet, daemon=True).start()
+        threading.Thread(target=self._clock_loop, daemon=True).start()
         if self.cfg.get("learning", {}).get("curiosity", True):
             threading.Thread(target=self._curiosity_loop, daemon=True).start()
         self._update_state()
@@ -162,6 +175,55 @@ class Core:
         self._pool.submit(self.process, text, "typed", attachments)
 
     # ---------- listening ----------
+    def _clock_loop(self):
+        """Rings timers and delivers reminders, even ones that came due while he was switched off."""
+        first = True
+        while not self._stop.is_set():
+            try:
+                clock = getattr(self.agent, "clock", None)
+                for it in (clock.due() if clock else []):
+                    late = first and time.time() - it["at"] > 90
+                    if it["kind"] == "timer":
+                        say = "Your timer is up." if it["text"] == "timer" else f"Your {it['text']} timer is up."
+                    else:
+                        say = ("While I was off, I missed a reminder: " if late else "Reminder: ") + it["text"] + "."
+                    self.emit("reminder", text=say, what=it["kind"])
+                    self.emit("assistant", speech="", display=say, emotion="neutral", mood="")
+                    if self.voice and self.speak_enabled:
+                        self.voice.speak(say, "calm")
+            except Exception:
+                pass
+            first = False
+            if self._stop.wait(1.0):
+                return
+
+    # ---------- what the UI shows ----------
+    def status(self):
+        a = self.agent
+        return {"brain": a.brain.last_used, "listening": self.listen_enabled and not self.mic_muted,
+                "voice": bool(self.voice and self.speak_enabled), "memory": self.mem.stats(),
+                "timers": a.clock.pending() if a.clock else [], "state": self._state, "tools": len(a.tools)}
+
+    def mind_graph(self, limit=80):
+        """His memory as a star map: every fact and note is a star, linked to the ones it shares meaning with."""
+        from .retrieval import tokens
+        nodes = []
+        for r in self.mem.fact_rows()[:limit]:
+            nodes.append({"label": r["fact"], "cat": r["category"] or "other", "imp": int(r["importance"] or 3)})
+        for topic, text, _src in self.mem.note_rows()[:max(0, limit - len(nodes))]:
+            nodes.append({"label": f"{topic}: {text}", "cat": "learned", "imp": 2})
+        toks = [set(tokens(n["label"])) for n in nodes]
+        edges = []
+        for i in range(len(nodes)):
+            scored = []
+            for j in range(i + 1, len(nodes)):
+                w = len(toks[i] & toks[j])
+                if w:
+                    scored.append((w, j))
+            for w, j in sorted(scored, reverse=True)[:3]:
+                edges.append((i, j, w))
+        return {"nodes": nodes, "edges": edges}
+
     def _vocab(self):
         """Names from what he knows about you, so the recogniser spells them right."""
         words, seen = [], set()
@@ -232,12 +294,19 @@ class Core:
     def process(self, text, source="typed", attachments=None):
         with self._proc_lock:
             if text.startswith("/") and not attachments:
-                return self._command(text)
+                cmd, _, arg = text[1:].partition(" ")
+                if cmd.lower() in PROMPTS and (arg.strip() or "{arg}" not in PROMPTS[cmd.lower()]):
+                    self.emit("user", text=text, source=source)
+                    text = PROMPTS[cmd.lower()].format(arg=arg.strip())
+                    source = "typed-command"
+                else:
+                    return self._command(text)
             if attachments and not text.strip():
                 text = "(I attached something. Please take a look.)"
             self._hearing = False
             self._thinking = True
-            self.emit("user", text=text, source=source, attachments=att.public_view(attachments))
+            if source != "typed-command":
+                self.emit("user", text=text, source=source, attachments=att.public_view(attachments))
             self._update_state()
             try:
                 self.agent.handle(text, attachments, source)
@@ -283,6 +352,9 @@ class Core:
                        f"icon, and paste this token. Port {self.bridge.port}.\n\n{self.bridge.token}")
             else:
                 msg = "The browser link is turned off (bridge.enabled in config.yaml)."
+        elif cmd in ("theme", "mind", "status"):
+            self.emit("command", name=cmd, arg=arg.strip())
+            return
         elif cmd == "forget" and arg.strip():
             self.mem.forget(arg.strip())
             msg = f"Done. I've forgotten anything mentioning \"{arg.strip()}\"."

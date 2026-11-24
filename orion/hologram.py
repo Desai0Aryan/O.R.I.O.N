@@ -15,6 +15,24 @@ VIOLET = np.array([0.55, 0.38, 1.00], np.float32)
 WHITE = np.array([1.0, 1.0, 1.0], np.float32)
 GREY = np.array([0.55, 0.60, 0.68], np.float32)
 
+# name: (main, secondary, highlight, UI accent colour)
+THEMES = {
+    "arc":    (BLUE, CYAN, ICE, "#5aa8ff"),                                                    # the classic arc-reactor blue
+    "ember":  ((1.00, 0.45, 0.14), (1.00, 0.70, 0.25), (1.00, 0.92, 0.78), "#ff9a4d"),         # molten orange
+    "aurora": ((0.12, 0.85, 0.55), (0.35, 1.00, 0.85), (0.85, 1.00, 0.95), "#4de3a3"),         # northern-lights green
+    "nebula": ((0.62, 0.34, 1.00), (0.95, 0.45, 0.95), (0.95, 0.88, 1.00), "#b58cff"),         # violet and magenta
+    "crimson": ((1.00, 0.18, 0.28), (1.00, 0.45, 0.40), (1.00, 0.88, 0.88), "#ff5a6e"),        # red alert
+    "ghost":  ((0.70, 0.78, 0.90), (0.85, 0.92, 1.00), (1.00, 1.00, 1.00), "#c9d6ea"),         # silver
+}
+THEMES = {k: (np.array(a, np.float32), np.array(b, np.float32), np.array(c, np.float32), d) for k, (a, b, c, d) in THEMES.items()}
+
+# the constellation Orion, hand-placed (x right, y up): stars with a brightness, and the lines between them
+ORION_STARS = [(-0.55, 0.95, 1.0), (0.55, 0.88, 0.8), (0.00, 1.28, 0.5),            # Betelgeuse, Bellatrix, Meissa
+               (-0.28, 0.02, 0.8), (0.00, 0.12, 0.9), (0.28, 0.22, 0.8),             # the belt: Alnitak, Alnilam, Mintaka
+               (-0.45, -0.95, 0.7), (0.55, -1.00, 1.0),                              # Saiph, Rigel
+               (0.98, 1.04, 0.45), (1.22, 0.68, 0.45), (1.24, 0.28, 0.45), (1.08, -0.06, 0.45)]   # the shield
+ORION_LINES = [(2, 0), (2, 1), (0, 3), (1, 5), (3, 4), (4, 5), (3, 6), (5, 7), (1, 8), (8, 9), (9, 10), (10, 11), (11, 5)]
+
 
 def fib_sphere(n):
     i = np.arange(n) + 0.5
@@ -76,8 +94,18 @@ class Hologram:
         self.k = {"speak": 0.0, "listen": 0.0, "think": 0.0, "mute": 0.0}
         self.b = self.m = self.hi = self.lvl = 0.0
         self.pulse = 0.0
+        self.theme = "arc"
         self.main = BLUE.copy()
         self.main_t = BLUE.copy()
+        self.cyan, self.ice = CYAN.copy(), ICE.copy()
+        self._tint_rgb = None
+        self.look = np.zeros(2, np.float32)          # where the cursor is, -1..1: he turns to look at it
+        self.look_t = np.zeros(2, np.float32)
+        self.energy = 1.0                            # 1 = wide awake, lower = sleepy and dim
+        self.boot = 0.0                              # 0 -> 1: particles stream in and assemble
+        self.shocks = []                             # expanding rings (ages)
+        self._arc_t, self._arcs = 0.0, []
+        self._yaw_eff = 0.0
         # ---- shell
         n = d(2600)
         self.shell = fib_sphere(n)
@@ -162,14 +190,39 @@ class Hologram:
         self.beam_z = rng.uniform(-1, 1, nbm).astype(np.float32)
         self.beam_h = rng.random(nbm).astype(np.float32)
         self.beam_v = rng.uniform(0.12, 0.35, nbm).astype(np.float32)
+        # ---- constellation, audio ring, boot scatter
+        self.cs = np.array(ORION_STARS, np.float32)
+        self.eq_n = d(72)
+        self.eq_ph = rng.uniform(0, TAU, self.eq_n).astype(np.float32)
+        self._scatter = None
+        self._delay = None
         # ---- buffers
         self.acc = np.zeros((3, self.h, self.w), np.float64)
         self.out = np.zeros((self.h, self.w, 4), np.uint8)
         self.out[..., 3] = 0
 
     # ------------------------------------------------------------------ control
+    def set_theme(self, name):
+        if name not in THEMES:
+            return
+        self.theme = name
+        self.cyan, self.ice = THEMES[name][1], THEMES[name][2]
+        self.set_tint(self._tint_rgb)
+
     def set_tint(self, rgb):
-        self.main_t = (BLUE * 0.7 + np.asarray(rgb, np.float32) * 0.3).astype(np.float32)
+        """Mood colour: the theme's colour, nudged a little toward how he feels."""
+        self._tint_rgb = rgb
+        base = THEMES[self.theme][0]
+        self.main_t = (base if rgb is None else base * 0.7 + np.asarray(rgb, np.float32) * 0.3).astype(np.float32)
+
+    def set_look(self, x, y):
+        self.look_t[:] = (max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y)))
+
+    def shockwave(self, n=1):
+        self.shocks += [-0.18 * i for i in range(n)]
+
+    def reboot(self):
+        self.boot = 0.0
 
     def update(self, dt, state, level, bands=None, pulse=0.0):
         dt = min(0.1, max(0.0, dt))
@@ -179,7 +232,10 @@ class Hologram:
         for key, on in target.items():
             self.k[key] += ((1.0 if on else 0.0) - self.k[key]) * ease
         mute = self.k["mute"]
-        self.t += dt * (1.0 - 0.75 * mute)
+        self.t += dt * (1.0 - 0.75 * mute) * (0.8 + 0.2 * self.energy)
+        self.boot = min(1.0, self.boot + dt / 2.4)
+        self.look += (self.look_t - self.look) * (1 - math.exp(-dt * 4.0))
+        self.shocks = [a + dt * 0.55 for a in self.shocks if a < 1.0]
         t = self.t
         if bands is None:
             tb, tm, th = level, level * (0.55 + 0.45 * abs(math.sin(t * 7.1))), level * abs(math.sin(t * 13.3 + 1.0)) * 0.8
@@ -232,7 +288,10 @@ class Hologram:
         t, k = self.t, self.k
         b, m, hi = self.b, self.m, self.hi
         main, mute = self.main, k["mute"]
+        CYAN, ICE = self.cyan, self.ice
         P, L, C = [], [], []
+        Rb = rot_y(self._yaw_eff)                          # cancels the spin: things that always face you
+        bill = lambda p: p @ Rb
 
         def add(p, col, inten, crisp=False):
             inten = np.asarray(inten, np.float32).reshape(-1)
@@ -354,7 +413,79 @@ class Hologram:
         wr = 0.5 * (1 - hh * 0.6)
         add(np.stack([self.beam_x * wr, by - hh * (by - 0.2), self.beam_z * wr], 1), CYAN * 0.7 + ICE * 0.3,
             np.sin(hh * math.pi) * 0.7)
+
+        # circular audio visualiser that always faces you: his voice (or yours) drawn as a ring of bars
+        n = self.eq_n
+        ang = np.arange(n) / n * TAU
+        sym = np.abs(np.sin(ang * 0.5))                    # mirrored left and right, like a real spectrum
+        band = b * (1 - sym) ** 1.5 + m * np.sin(sym * math.pi) + hi * sym ** 1.5
+        flick = 0.55 + 0.45 * np.sin(t * 11 + self.eq_ph * 3)
+        amp = (k["speak"] * band * flick + k["listen"] * self.lvl * (0.6 + 0.4 * flick) * 0.9).astype(np.float32)
+        rin = 1.62
+        seg = np.linspace(0, 1, 5, dtype=np.float32)[None, :]
+        rad = rin + (0.04 + 0.55 * np.clip(amp, 0, 1.2))[:, None] * seg
+        pts = np.stack([rad * np.cos(ang)[:, None], rad * np.sin(ang)[:, None], np.full_like(rad, 0.0)], -1)
+        add(bill(pts.reshape(-1, 3)), ICE * 0.6 + main * 0.4, (0.10 + 1.1 * np.clip(amp, 0, 1.2)[:, None] * (0.4 + 0.6 * seg)).reshape(-1))
+        add(bill(pts[:, -1]), WHITE, 0.10 + 0.9 * np.clip(amp, 0, 1.2), crisp=True)
+        aa = np.linspace(0, TAU, 160, endpoint=False).astype(np.float32)
+        add(bill(np.stack([rin * np.cos(aa), rin * np.sin(aa), np.zeros_like(aa)], 1)), CYAN, 0.09 + 0.10 * (k["speak"] + k["listen"]))
+
+        # the constellation Orion floats behind him; its belt stars become a thinking indicator
+        cs = self.cs
+        sc = 2.45
+        dim = 4.2                                            # the chart is far behind, so depth fading would hide it
+        stars = np.stack([cs[:, 0] * sc, cs[:, 1] * sc, np.full(len(cs), -2.0, np.float32)], 1)
+        twk = 0.65 + 0.35 * np.sin(t * 1.3 + np.arange(len(cs)) * 1.9)
+        chase = np.zeros(len(cs), np.float32)
+        for j, si in enumerate((3, 4, 5)):                  # Alnitak -> Alnilam -> Mintaka, over and over
+            chase[si] = k["think"] * max(0.0, math.sin(t * 5.0 - j * 1.2)) ** 2
+        sbright = cs[:, 2] * twk * (0.95 + 0.5 * (k["speak"] * b + k["listen"] * self.lvl)) + chase * 1.6
+        for _ in range(8):                                   # several stacked points = a soft, bright star
+            add(bill(stars), ICE, sbright * 0.55 * dim)
+        add(bill(stars), WHITE, sbright * dim, crisp=True)
+        ua = np.linspace(0, 1, 12, dtype=np.float32)[None, :, None]
+        ls = ORION_LINES
+        a_i, b_i = [x for x, _ in ls], [y for _, y in ls]
+        lp = (1 - ua) * stars[a_i][:, None, :] + ua * stars[b_i][:, None, :]
+        add(bill(lp.reshape(-1, 3)), CYAN * 0.7 + main * 0.3, dim * (0.13 + 0.10 * k["speak"] * (0.3 + b) + 0.09 * k["think"]))
+
+        # lightning between points of the shell while he thinks
+        if k["think"] > 0.03:
+            if t - self._arc_t > 0.09 or not self._arcs:
+                self._arc_t = t
+                self._arcs = self._make_arcs(4)
+            arcs = np.concatenate(self._arcs)
+            fl = 0.5 + 0.5 * np.sin(t * 40)
+            add(arcs, ICE, k["think"] * (0.55 + 0.9 * fl))
+        else:
+            self._arcs = []
+
+        # shockwaves: rings that roll outward when you speak to him or a reminder fires
+        for age in self.shocks:
+            if age <= 0:
+                continue
+            rr_ = 1.1 + age * 2.6
+            aa = np.linspace(0, TAU, 110, endpoint=False).astype(np.float32)
+            ring = np.stack([rr_ * np.cos(aa), rr_ * np.sin(aa), np.zeros_like(aa)], 1)
+            add(bill(ring), ICE, 1.2 * (1 - age) ** 1.5)
         return np.concatenate(P), np.concatenate(L), np.concatenate(C)
+
+    def _make_arcs(self, count):
+        rng, out = self.rng, []
+        for _ in range(count):
+            a = unit(rng.normal(size=3)).astype(np.float32)
+            bq = unit(a + rng.normal(size=3) * 0.9).astype(np.float32)
+            pts = np.array([a, bq], np.float32)
+            for jit in (0.35, 0.18, 0.09, 0.05):             # midpoint displacement = jagged bolts
+                mids = unit((pts[:-1] + pts[1:]) / 2 + rng.normal(size=(len(pts) - 1, 3)) * jit)
+                new = np.empty((len(pts) + len(mids), 3), np.float32)
+                new[0::2], new[1::2] = pts, mids
+                pts = new
+            # densify the bolt so it reads as a continuous line
+            ua = np.linspace(0, 1, 3, dtype=np.float32)[None, :, None]
+            seg = ((1 - ua) * pts[:-1][:, None, :] + ua * pts[1:][:, None, :]).reshape(-1, 3)
+            out.append((unit(seg) * 1.02).astype(np.float32))
+        return out
 
     # ------------------------------------------------------------------ rendering
     def _splat(self, x, y, light):
@@ -431,16 +562,27 @@ class Hologram:
     def render(self):
         k, mute = self.k, self.k["mute"]
         self.acc[:] = 0
-        G = rot_x(0.30) @ rot_y(self.yaw)
+        self._yaw_eff = self.yaw + float(self.look[0]) * 0.55
+        G = rot_x(0.30 - float(self.look[1]) * 0.30) @ rot_y(self._yaw_eff)
         self._G = G
         pos, light, crisp = self._build()
+        if self.boot < 1.0:                                  # particles streaming in from the dark and snapping into place
+            n = len(pos)
+            if self._scatter is None or len(self._scatter) != n:
+                rr = self.rng
+                self._scatter = (unit(rr.normal(size=(n, 3))) * rr.uniform(2.5, 5.5, (n, 1))).astype(np.float32)
+                self._delay = rr.uniform(0, 0.55, n).astype(np.float32)
+            e = np.clip((self.boot * 1.55 - self._delay) / 0.45, 0, 1)
+            e = (e * e * (3 - 2 * e))[:, None]
+            pos = pos * e + self._scatter * (1 - e)
+            light = light * (0.15 + 0.85 * e)
         q = pos @ G.T
         z = q[:, 2]
         s = self.D / (self.D - z)
         x = self.cx + q[:, 0] * self.r * s
         y = self.cy - q[:, 1] * self.r * s
         df = np.clip(0.62 + 0.20 * z, 0.18, 1.25)[:, None]
-        gain = 1.0 - 0.55 * mute
+        gain = (1.0 - 0.55 * mute) * (0.72 + 0.28 * self.energy)
         light = light * df * gain
         if mute > 0.01:
             gray = light.mean(axis=1, keepdims=True) * GREY[None]
