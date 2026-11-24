@@ -523,8 +523,33 @@ class ChatPanel(HudFrame):
         root.addWidget(self.stack, 1)
         self.tab_btns[0].setChecked(True)
         who = f", {user_name.upper()}" if user_name else ""
-        self._empty = hud_label(f"HOW CAN I HELP YOU{who}?", 12, 2.0, "#5e86c0")
-        self._empty.setAlignment(Qt.AlignCenter)
+        self._empty = QWidget()
+        ev = QVBoxLayout(self._empty)
+        ev.setContentsMargins(0, 24, 0, 0)
+        ev.setSpacing(14)
+        hl = hud_label(f"HOW CAN I HELP YOU{who}?", 12, 2.0, "#5e86c0")
+        hl.setAlignment(Qt.AlignCenter)
+        ev.addWidget(hl)
+        from PySide6.QtWidgets import QGridLayout
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        quick = [("◈  Brief me", "/brief"), ("☼  Weather", "What's the weather like right now?"), ("⌕  Find a file", None, "/find "),
+                 ("▶  Open an app", None, "/open "), ("♫  Music", "/music now"), ("⚙  My computer", "/sys"),
+                 ("⌛  Timer", None, "/timer "), ("✦  Study a topic", None, "/study ")]
+        for i, q in enumerate(quick):
+            b = QPushButton(q[0])
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedHeight(40)
+            b.setStyleSheet("QPushButton{background:rgba(20,45,95,120);color:#cfe3ff;border:1px solid rgba(90,168,255,90);"
+                            "border-radius:4px;text-align:left;padding-left:12px;font-size:12px;letter-spacing:1px;}"
+                            "QPushButton:hover{background:rgba(40,95,190,170);border-color:rgba(160,215,255,230);color:white;}")
+            if q[1]:
+                b.clicked.connect(lambda _=0, m=q[1]: self.sendMessage.emit(m, []))
+            else:
+                b.clicked.connect(lambda _=0, pre=q[2]: (self.input.setText(pre), self.input.setFocus()))
+            grid.addWidget(b, i // 2, i % 2)
+        ev.addLayout(grid)
+        ev.addStretch(1)
         self.v.insertWidget(0, self._empty)
 
         self.chipbar = QScrollArea()
@@ -564,7 +589,7 @@ class ChatPanel(HudFrame):
         row.setContentsMargins(0, 0, 0, 0)
         self.rowW.setLayout(row)
         root.addWidget(self.rowW)
-        self.completer = QCompleter(["/brief", "/timer ", "/remind ", "/study ", "/theme ", "/mind", "/status", "/memory",
+        self.completer = QCompleter(["/brief", "/timer ", "/remind ", "/study ", "/open ", "/find ", "/sys", "/vol ", "/music ", "/copy", "/theme ", "/mind", "/status", "/memory",
                                      "/profile", "/journal", "/forget ", "/token", "/help"], self.input)
         self.completer.setCaseSensitivity(Qt.CaseInsensitive)
         self.completer.popup().setStyleSheet(MENU_QSS)
@@ -1252,7 +1277,12 @@ class Overlay(QObject):
                  "list_reminders": "Checking reminders", "cancel_reminder": "Cancelling a reminder",
                  "briefing": "Gathering your briefing", "remember": "Remembering that", "recall": "Recalling",
                  "forget": "Forgetting", "learn": "Learning from that", "save_note": "Saving a note",
-                 "get_time": "Checking the time"}
+                 "get_time": "Checking the time", "open_app": "Opening an app", "open_url": "Opening a page",
+                 "search_in_browser": "Searching in your browser", "open_path": "Opening a file", "find_files": "Finding files",
+                 "list_folder": "Looking in a folder", "read_file": "Reading a file", "write_file": "Writing a file",
+                 "run_command": "Running a command", "system_info": "Checking the system", "set_volume": "Setting the volume",
+                 "notify": "Sending a notification", "clipboard_get": "Reading the clipboard", "clipboard_set": "Copying that",
+                 "music": "Controlling music"}
 
     def _on_tool(self, d):
         name, args = d.get("name", ""), d.get("args") or {}

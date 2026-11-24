@@ -15,7 +15,7 @@ from .wake import find_wake, strip_wake
 
 HELP = ("Commands: /brief (your day at a glance), /timer 10m tea, /remind 5pm call mom, /study <topic>, "
         "/theme <arc|ember|aurora|nebula|crimson|ghost>, /mind (my memory star-map), /status, /memory, /profile, "
-        "/journal, /forget <text>, /token (connect the browser extension), /help")
+        "/open <app or site>, /find <words>, /sys, /vol <0-100>, /music <play|pause|next>, /copy, /journal, /forget <text>, /token (connect the browser extension), /help")
 
 # slash commands that simply become a request to the agent
 PROMPTS = {
@@ -23,6 +23,12 @@ PROMPTS = {
     "timer": "Set a timer: {arg}",
     "remind": "Set a reminder: {arg}",
     "study": "Study this on the internet and remember what you learn: {arg}",
+    "open": "Open this for me: {arg}",
+    "find": "Find files on my computer matching: {arg}. Show me the best matches.",
+    "sys": "How is my computer doing? Battery, CPU, memory and disk, in a sentence or two.",
+    "vol": "Set my volume to {arg}",
+    "music": "Music: {arg}",
+    "copy": "Look at what's on my clipboard and tell me what it is.",
 }
 
 

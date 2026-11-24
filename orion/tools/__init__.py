@@ -2,6 +2,6 @@
 
 
 def load_all(agent):
-    from . import calc, clock, study, web
-    for mod in (web, calc, clock, study):
+    from . import calc, clock, study, system, web
+    for mod in (web, calc, clock, study, system):
         mod.register(agent)

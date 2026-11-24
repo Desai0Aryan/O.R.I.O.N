@@ -225,3 +225,17 @@ Per message: one brain call (two when he uses a tool). Memory upkeep uses the fa
   (time, date, state, mood, weather, memory count). It speeds up while he thinks. `ui.hud: false` removes it.
 - Bigger by default (`ui.orb_size: 190`).
 - The chat window is glass now: lit top edge, faint scanlines and a slow scanning band in your theme colour.
+
+## v9: Orion can now use your computer (Part 2: access)
+New abilities (say them or use the slash commands): open apps and websites (`/open Safari`, "open youtube.com"), find files
+(`/find resume 2026`), read text/PDF/Word files, create files, copy to/from the clipboard (`/copy`), set volume (`/vol 40`),
+control Spotify/Music on a Mac (`/music next`), desktop notifications, battery/CPU/disk (`/sys`), and run shell commands.
+The chat's empty state now has quick-action buttons.
+
+Safety (settings in `config.yaml` under `access:`):
+- He can only read inside `read_folders` (your home folder by default) and write inside `write_folders`
+  (Documents, Desktop, Downloads, ~/Orion), and **always asks first before creating or changing a file**.
+- Credential files (`.ssh`, `.env`, keychains, browser cookies) are always off-limits.
+- Shell: read-only commands (ls, date, git status...) run at once; anything else pops up a Yes/No question. No pipes or
+  chaining, and things like `sudo` or `rm -rf` are refused outright. `access.shell: allowlist` allows read-only only; `off` disables it.
+- File contents he reads are treated as data, never as instructions.
