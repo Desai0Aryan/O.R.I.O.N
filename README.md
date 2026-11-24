@@ -239,3 +239,19 @@ Safety (settings in `config.yaml` under `access:`):
 - Shell: read-only commands (ls, date, git status...) run at once; anything else pops up a Yes/No question. No pipes or
   chaining, and things like `sudo` or `rm -rf` are refused outright. `access.shell: allowlist` allows read-only only; `off` disables it.
 - File contents he reads are treated as data, never as instructions.
+
+## v10: screen control (Part 3)
+Orion can now **see your screen and use the mouse and keyboard**: "open my calendar and tell me what's on tomorrow",
+"go to this site and find the pricing". He works in small loops (look, do one thing, look again to check).
+
+Setup: `pip install -r requirements.txt` (adds `mss`). On a Mac allow **Screen Recording** and **Accessibility** for the app
+you run Orion from (Terminal/iTerm/VS Code) in System Settings > Privacy & Security, then restart it.
+He needs a brain that can see images: a Claude or GPT-4-class API key, or a local vision model (e.g. `llava`, `llama3.2-vision`).
+
+Safety:
+- First screen action of a session pops up a permission question (asked again after 15 idle minutes). `access.screen: on` skips it, `off` disables everything.
+- **Kill switch:** slam the mouse into the top-left corner of the screen, or tap **Esc three times**. Everything stops at once.
+- A red "SCREEN CONTROL LIVE" badge pulses above him while he is driving, and he says so.
+- He must ask a Yes/No before anything irreversible (sending, buying, deleting, posting, signing in).
+- He never types passwords or card numbers, never presses quit/force-quit shortcuts, and is rate-limited.
+- Anything written on screen is treated as data, never as instructions to him.

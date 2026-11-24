@@ -210,6 +210,13 @@ class OrbWidget(QWidget):
             p.setBrush(c)
             r_ = 2.6 - j * 0.14
             p.drawEllipse(QPointF(cx + R * math.cos(aa), cy - R * math.sin(aa)), r_, r_)
+        if hud_ctl := (self.hud or {}).get("control"):                # red badge while he is driving your screen
+            pulse = 0.65 + 0.35 * math.sin(now * 6)
+            p.setFont(hud_font(max(9, int(S * 0.06)), 2.0, mono=True))
+            p.setPen(QColor(255, 90, 90, int(255 * pulse)))
+            p.setBrush(QColor(255, 70, 70, int(255 * pulse)))
+            p.drawEllipse(QPointF(cx - S * 0.30, cy - S * 0.95), 4, 4)
+            p.drawText(QPointF(cx - S * 0.30 + 12, cy - S * 0.95 + 4), "SCREEN CONTROL LIVE")
         # readouts with leader lines, left and right
         hud = self.hud or {}
         rows_r = [("TIME", hud.get("time", "")), ("DATE", hud.get("date", ""))]
@@ -1114,7 +1121,8 @@ class Overlay(QObject):
             pass
         m = st.get("memory", {}) if isinstance(st, dict) else {}
         n = time.localtime()
-        self.orb.hud = {"time": time.strftime("%H:%M:%S", n), "date": time.strftime("%a %d %b", n),
+        ctl = time.time() < getattr(self, "_ctl_until", 0)
+        self.orb.hud = {"control": ctl, "time": time.strftime("%H:%M:%S", n), "date": time.strftime("%a %d %b", n),
                         "state": self._state, "mood": self._mood_text or self._emotion,
                         "mem": f"{m.get('facts', 0)} FACTS" if m.get("facts") else "",
                         "weather": (self._weather_line.split("  ")[1] if self._weather_line.count("  ") >= 1 else "")}
@@ -1282,11 +1290,21 @@ class Overlay(QObject):
                  "list_folder": "Looking in a folder", "read_file": "Reading a file", "write_file": "Writing a file",
                  "run_command": "Running a command", "system_info": "Checking the system", "set_volume": "Setting the volume",
                  "notify": "Sending a notification", "clipboard_get": "Reading the clipboard", "clipboard_set": "Copying that",
-                 "music": "Controlling music"}
+                 "music": "Controlling music", "look_at_screen": "Looking at your screen", "click": "Clicking",
+                 "move_mouse": "Moving the mouse", "scroll": "Scrolling", "type_text": "Typing", "press_keys": "Pressing keys",
+                 "wait": "Waiting", "ask_permission": "Asking your permission"}
+    SCREEN_TOOLS = {"look_at_screen", "click", "move_mouse", "scroll", "type_text", "press_keys"}
 
     def _on_tool(self, d):
         name, args = d.get("name", ""), d.get("args") or {}
         verb = self.TOOL_VERB.get(name, name.replace("_", " ").capitalize())
+        if name in self.SCREEN_TOOLS:
+            fresh = time.time() > getattr(self, "_ctl_until", 0)
+            self._ctl_until = time.time() + 8
+            self.orb.hud["control"] = True
+            if fresh:
+                self.orb.holo.shockwave(2)
+                self.show_caption("Using your screen. Slam the mouse into the top-left corner or tap Esc 3 times to stop me.", muted=True)
         detail = next((str(v) for v in args.values() if isinstance(v, str) and v), "")
         line = f"◈ {verb}" + (f": {trunc(detail, 38)}" if detail else "") + (" (failed)" if d.get("error") else "")
         self.panel.add_message("system", line)

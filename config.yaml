@@ -73,6 +73,7 @@ bridge:                    # lets the browser extension share your tab list with
   port: 8765
 
 access:                    # what Orion may touch on this computer
+  screen: ask              # ask (permission popup first) | on | off. Kill switch: mouse to top-left corner, or Esc x3
   shell: ask               # ask (read-only commands run, others need your OK) | allowlist (read-only only) | off
   read_folders: ["~"]      # he can search and read inside these (credential files are always off-limits)
   write_folders: ["~/Documents", "~/Desktop", "~/Downloads", "~/Orion"]   # he can create files only here, and asks first
