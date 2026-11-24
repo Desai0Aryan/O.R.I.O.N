@@ -66,6 +66,9 @@ class OrbWidget(QWidget):
         self._ms, self._frames = 0.0, 0
         self.theme = "arc"
         self.countdown = ""
+        self.hud = {}
+        self.hud_on = True
+        self.accent_c = QColor(accent)
         self._booted = False
         self._resize()
         self._build_holo()
@@ -77,11 +80,12 @@ class OrbWidget(QWidget):
         self.timer.start(33)
 
     def _resize(self):
-        self.setFixedSize(int(self.S * 2.1), int(self.S * 2.4))
+        self.holo_w = int(self.S * 2.1)
+        self.setFixedSize(int(self.S * 3.1), int(self.S * 2.4))
 
     def _build_holo(self):
         q = self.quality
-        self.holo = Hologram(int(self.width() * q), int(self.height() * q), self.S * q * 0.30, detail=self.detail)
+        self.holo = Hologram(int(self.holo_w * q), int(self.height() * q), self.S * q * 0.30, detail=self.detail)
         self.holo.set_theme(self.theme)
         self.holo.set_tint(self._tint())
         if self._booted:
@@ -91,6 +95,7 @@ class OrbWidget(QWidget):
 
     def set_theme(self, name):
         self.theme = name
+        self.accent_c = QColor(THEMES[name][3])
         self.holo.set_theme(name)
 
     def _tint(self):
@@ -157,6 +162,91 @@ class OrbWidget(QWidget):
                 self.clicked.emit()
             self._press = None
 
+
+    # ----- the Jarvis-style HUD that orbits him: rotating segmented rings, tick marks and live readouts -----
+    def _paint_hud(self, p):
+        S, w, h = self.S, self.width(), self.height()
+        cx, cy = w / 2, h * 0.47
+        a = self.accent_c
+        now = time.monotonic()
+        act = {"idle": 0.55, "listening": 1.0, "thinking": 1.0, "speaking": 0.9}.get(self.state, 0.6)
+        fade = min(1.0, self.holo.energy) * act
+        p.setRenderHint(QPainter.Antialiasing)
+        spin = 6 + (40 if self.state == "thinking" else 0)
+        # outer tick ring (slow), bright every sixth tick
+        R2 = S * 0.80
+        p.save()
+        p.translate(cx, cy)
+        p.rotate(now * 4 % 360)
+        for i in range(90):
+            ang = i * 4.0
+            major = i % 6 == 0
+            L = 7 if major else 3.5
+            c = QColor(a)
+            c.setAlpha(int((150 if major else 55) * fade))
+            p.setPen(cpen(c, 1.3 if major else 0.9))
+            p.save()
+            p.rotate(ang)
+            p.drawLine(QPointF(0, -R2), QPointF(0, -R2 - L))
+            p.restore()
+        p.restore()
+        # segmented arcs counter-rotating
+        for k, (R, width, segs, speed, alpha) in enumerate(((S * 0.72, 1.8, 3, spin, 150), (S * 0.76, 1.1, 5, -spin * 0.7, 90))):
+            c = QColor(a)
+            c.setAlpha(int(alpha * fade))
+            p.setPen(cpen(c, width))
+            base = now * speed
+            span = 360 / segs
+            for s_ in range(segs):
+                p.drawArc(QRectF(cx - R, cy - R, 2 * R, 2 * R), int((base + s_ * span) * 16), int(span * 0.55 * 16))
+        # a bright orbiting marker with a comet tail
+        R = S * 0.72
+        ang = now * 55
+        for j in range(14):
+            aa = math.radians(ang - j * 2.6)
+            c = QColor(255, 255, 255) if j == 0 else QColor(a)
+            c.setAlpha(int((255 if j == 0 else 150 - j * 10) * fade))
+            p.setPen(Qt.NoPen)
+            p.setBrush(c)
+            r_ = 2.6 - j * 0.14
+            p.drawEllipse(QPointF(cx + R * math.cos(aa), cy - R * math.sin(aa)), r_, r_)
+        # readouts with leader lines, left and right
+        hud = self.hud or {}
+        rows_r = [("TIME", hud.get("time", "")), ("DATE", hud.get("date", ""))]
+        rows_l = [("STATE", hud.get("state", "")), ("MOOD", hud.get("mood", ""))]
+        if hud.get("weather"):
+            rows_r.append(("WX", hud["weather"]))
+        if hud.get("mem"):
+            rows_l.append(("MEM", hud["mem"]))
+        fs = max(8, int(S * 0.056))
+        p.setFont(hud_font(fs, 1.2, mono=True))
+        fm = QFontMetrics(hud_font(fs, 1.2, mono=True))
+        for side, rows in ((-1, rows_l), (1, rows_r)):
+            for i, (key, val) in enumerate(rows):
+                if not val:
+                    continue
+                y = cy - S * 0.30 + i * (fs * 3.2) + (0 if side < 0 else S * 0.06)
+                ang = math.asin(max(-0.95, min(0.95, (y - cy) / (S * 0.80))))
+                x0 = cx + side * S * 0.80 * math.cos(ang)
+                x1 = cx + side * (S * 0.86)
+                x2 = x1 + side * S * 0.10
+                c = QColor(a)
+                c.setAlpha(int(170 * fade))
+                p.setPen(cpen(c, 1.0))
+                p.drawLine(QPointF(x0, y), QPointF(x1, y - 4))
+                p.drawLine(QPointF(x1, y - 4), QPointF(x2, y - 4))
+                p.setBrush(QColor(255, 255, 255, int(220 * fade)))
+                p.drawEllipse(QPointF(x0, y), 1.8, 1.8)
+                val = str(val)[:14].upper()
+                tw = fm.horizontalAdvance(val)
+                tx = x2 + 4 if side > 0 else x2 - 4 - tw
+                kc = QColor(a)
+                kc.setAlpha(int(200 * fade))
+                p.setPen(kc)
+                p.drawText(QPointF(tx, y - 8), key)
+                p.setPen(QColor(235, 245, 255, int(235 * fade)))
+                p.drawText(QPointF(tx, y + fs - 1), val)
+
     # ----- paint: the hologram is rendered to one image per frame -----
     def paintEvent(self, _):
         t0 = time.perf_counter()
@@ -165,7 +255,9 @@ class OrbWidget(QWidget):
         img = QImage(arr.data, w, h, w * 4, QImage.Format_ARGB32_Premultiplied)
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        p.drawImage(self.rect(), img)
+        p.drawImage(QRect((self.width() - self.holo_w) // 2, 0, self.holo_w, self.height()), img)
+        if self.hud_on:
+            self._paint_hud(p)
         if self.countdown:                                       # the nearest timer, written under him in light
             p.setFont(hud_font(max(9, int(self.S * 0.075)), 2.0, mono=True))
             p.setPen(QColor(220, 240, 255, 215))
@@ -229,9 +321,26 @@ class HudFrame(QFrame):
         path.lineTo(0.75, c)
         path.closeSubpath()
         g = QLinearGradient(0, 0, 0, h)
-        g.setColorAt(0, QColor(7, 14, 34, 242))
-        g.setColorAt(1, QColor(4, 9, 24, 246))
+        g.setColorAt(0, QColor(9, 18, 42, 214))
+        g.setColorAt(1, QColor(3, 7, 20, 226))
         p.fillPath(path, g)
+        p.save()
+        p.setClipPath(path)
+        glow = QLinearGradient(0, 0, 0, 120)                      # light pooled at the top like a lit glass edge
+        glow.setColorAt(0, rgba(self.ACCENT, 46))
+        glow.setColorAt(1, rgba(self.ACCENT, 0))
+        p.fillRect(0, 0, int(w), 120, glow)
+        p.setPen(QPen(QColor(255, 255, 255, 7), 1))              # faint scanlines
+        for yy in range(0, int(h), 3):
+            p.drawLine(0, yy, int(w), yy)
+        ph = (time.monotonic() * 0.16) % 1.0                      # a slow scanning band
+        sy = ph * (h + 160) - 80
+        band = QLinearGradient(0, sy - 70, 0, sy + 70)
+        band.setColorAt(0, rgba(self.ACCENT, 0))
+        band.setColorAt(0.5, rgba(self.ACCENT, 26))
+        band.setColorAt(1, rgba(self.ACCENT, 0))
+        p.fillRect(0, int(sy - 70), int(w), 140, band)
+        p.restore()
         p.setPen(QPen(rgba(self.ACCENT, 55), 6))
         p.drawPath(path)
         p.setPen(QPen(rgba(self.ACCENT, 215), 1.3))
@@ -461,6 +570,9 @@ class ChatPanel(HudFrame):
         self.completer.popup().setStyleSheet(MENU_QSS)
         self.input.setCompleter(self.completer)
 
+        self.anim = QTimer(self)
+        self.anim.timeout.connect(lambda: self.isVisible() and self.update())
+        self.anim.start(60)
         self.grip = QSizeGrip(self)
         self.grip.setFixedSize(16, 16)
         self.attachReady.connect(lambda a: self.add_items([a]))
@@ -779,6 +891,8 @@ class Overlay(QObject):
         self.orb.theme = self.theme
         self.orb.holo.set_theme(self.theme)
         self.orb.holo.fx = float(u.get("holo_fx", 1.0))
+        self.orb.hud_on = bool(u.get("hud", True))
+        self.orb.accent_c = QColor(THEMES[self.theme][3])
         self.accent = THEMES[self.theme][3]
         self.holo_win = HoloWindow(self, self.orb)
         self.cap = HoloCaption(self.accent)
@@ -967,7 +1081,21 @@ class Overlay(QObject):
         else:
             self.orb.countdown = ""
 
+    def _hud_tick(self):
+        st = {}
+        try:
+            st = self.core.status()
+        except Exception:
+            pass
+        m = st.get("memory", {}) if isinstance(st, dict) else {}
+        n = time.localtime()
+        self.orb.hud = {"time": time.strftime("%H:%M:%S", n), "date": time.strftime("%a %d %b", n),
+                        "state": self._state, "mood": self._mood_text or self._emotion,
+                        "mem": f"{m.get('facts', 0)} FACTS" if m.get("facts") else "",
+                        "weather": (self._weather_line.split("  ")[1] if self._weather_line.count("  ") >= 1 else "")}
+
     def _timer_tick(self):
+        self._hud_tick()
         if getattr(self, "_demo_timers", False):
             return
         try:

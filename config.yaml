@@ -53,9 +53,10 @@ voice:
 ui:
   enabled: true
   corner: bottom-right     # top-left | top-right | bottom-left | bottom-right (drag the core to move it)
-  orb_size: 150            # bigger number = bigger hologram
+  orb_size: 190            # bigger number = bigger hologram
   quality: 1.25            # 1.0 = fastest, up to 2.0 = sharpest (it also lowers itself on slow computers)
   margin: 24
+  hud: true                # rings, tick marks and live readouts orbiting him
   holo_fx: 1.0             # projector look: scanlines, colour fringing, rare glitches (0 = clean)
   dock_icon: true          # Orion shows in the Dock as his own app; click it to open the chat (false = menu bar only)
   chat_on_top: false       # keep the chat window above other apps

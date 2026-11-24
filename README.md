@@ -219,3 +219,9 @@ Per message: one brain call (two when he uses a tool). Memory upkeep uses the fa
   Drag it by the header, resize from the bottom-right corner, `Esc` or `Cmd+W` hides it. Size and place are remembered.
   Set `ui.chat_on_top: true` to keep it above other apps, `ui.dock_icon: false` for menu-bar only.
 - **Try it without a brain:** `python main.py --demo` plays a short scripted tour (speech, listening, thinking, themes, timer).
+
+### v8.1: fancier
+- A Jarvis-style HUD orbits him: counter-rotating segmented rings, a slow tick-mark ring, a comet marker, and live readouts
+  (time, date, state, mood, weather, memory count). It speeds up while he thinks. `ui.hud: false` removes it.
+- Bigger by default (`ui.orb_size: 190`).
+- The chat window is glass now: lit top edge, faint scanlines and a slow scanning band in your theme colour.
