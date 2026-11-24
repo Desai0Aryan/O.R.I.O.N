@@ -56,7 +56,9 @@ ui:
   orb_size: 150            # bigger number = bigger hologram
   quality: 1.25            # 1.0 = fastest, up to 2.0 = sharpest (it also lowers itself on slow computers)
   margin: 24
-  opacity: 0.98
+  holo_fx: 1.0             # projector look: scanlines, colour fringing, rare glitches (0 = clean)
+  dock_icon: true          # Orion shows in the Dock as his own app; click it to open the chat (false = menu bar only)
+  chat_on_top: false       # keep the chat window above other apps
   theme: arc               # arc | ember | aurora | nebula | crimson | ghost  (switch any time with /theme ember)
   accent: "#5aa8ff"        # fallback colour (the theme sets it)
   sounds: true             # soft synthesised sounds: boot, listening, thinking, reminders

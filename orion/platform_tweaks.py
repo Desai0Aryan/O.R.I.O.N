@@ -32,6 +32,39 @@ def show_on_all_spaces(widget):
         return False
 
 
+def make_holographic(widget):
+    """macOS: no window shadow, no background, floats above everything and on every Space, so the
+    hologram looks projected straight onto your desktop instead of sitting in a window."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import objc
+        from AppKit import NSColor
+        view = objc.objc_object(c_void_p=int(widget.winId()))
+        win = view.window()
+        win.setHasShadow_(False)
+        win.setOpaque_(False)
+        win.setBackgroundColor_(NSColor.clearColor())
+        win.setIgnoresMouseEvents_(False)
+        show_on_all_spaces(widget)
+        return True
+    except Exception:
+        return False
+
+
+def set_click_through(widget, ignore):
+    """macOS: let the mouse pass through this window (True) or catch it (False). Returns True when applied."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import objc
+        view = objc.objc_object(c_void_p=int(widget.winId()))
+        view.window().setIgnoresMouseEvents_(bool(ignore))
+        return True
+    except Exception:
+        return False
+
+
 class Hotkey:
     """A global keyboard shortcut (needs the optional pynput; on a Mac, allow Accessibility for your terminal)."""
 

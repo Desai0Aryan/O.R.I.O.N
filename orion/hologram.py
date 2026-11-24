@@ -105,6 +105,9 @@ class Hologram:
         self.boot = 0.0                              # 0 -> 1: particles stream in and assemble
         self.shocks = []                             # expanding rings (ages)
         self._arc_t, self._arcs = 0.0, []
+        self.fx = 1.0                                # projector look: scanlines, colour fringing, glitches (0 = off)
+        self.timers = []                             # fractions left (0..1) of running timers: drawn as rings around him
+        self._gl = [0, 0, 0, 0]                      # glitch: frames left, first row, rows, sideways shift
         self._yaw_eff = 0.0
         # ---- shell
         n = d(2600)
@@ -220,6 +223,11 @@ class Hologram:
 
     def shockwave(self, n=1):
         self.shocks += [-0.18 * i for i in range(n)]
+
+    def glitch(self, strength=1.0):
+        """A brief horizontal tear, like a projector hiccup."""
+        rr = self.rng
+        self._gl = [int(2 + 2 * strength), int(rr.integers(0, max(1, self.h - 40))), int(rr.integers(8, 28)), int(rr.choice([-1, 1]) * rr.integers(4, 14))]
 
     def reboot(self):
         self.boot = 0.0
@@ -460,6 +468,20 @@ class Hologram:
         else:
             self._arcs = []
 
+        # running timers wrap around him as rings that slowly empty
+        for ti, f in enumerate(self.timers[:3]):
+            f = max(0.0, min(1.0, f))
+            rad = 2.02 + 0.17 * ti
+            aa = np.linspace(0, TAU, 150, endpoint=False).astype(np.float32)
+            add(bill(np.stack([rad * np.cos(aa), rad * np.sin(aa), np.zeros_like(aa)], 1)), CYAN, 0.10)
+            if f > 0.004:
+                n = max(2, int(170 * f))
+                ang = (math.pi / 2 - np.linspace(0, TAU * f, n)).astype(np.float32)
+                arc = np.stack([rad * np.cos(ang), rad * np.sin(ang), np.zeros_like(ang)], 1)
+                add(bill(arc), ICE * 0.6 + main * 0.4, 0.75)
+                add(bill(arc[-1:]), WHITE, 1.6, crisp=True)
+                add(bill(arc[:1]), WHITE, 0.9, crisp=True)
+
         # shockwaves: rings that roll outward when you speak to him or a reminder fires
         for age in self.shocks:
             if age <= 0:
@@ -608,4 +630,28 @@ class Hologram:
         o[..., 1] = col[1] * 255
         o[..., 2] = col[0] * 255
         o[..., 3] = alpha * 255
+        if self.fx > 0.01:
+            self._projector_fx(o)
         return o
+
+    def _projector_fx(self, o):
+        """What makes it look projected rather than drawn: faint scanlines with a slow bright sweep, a hair of
+        colour fringing on the edges, and now and then a horizontal tear."""
+        fx, h = self.fx, self.h
+        y = np.arange(h, dtype=np.float32)
+        sweep = (self.t * 55.0) % (h + 120) - 60
+        mult = (1.0 - 0.09 * fx * (0.5 + 0.5 * np.sin(y * 2.0 + self.t * 5.0))
+                + 0.16 * fx * np.exp(-((y - sweep) ** 2) / (2 * 12.0 ** 2)))[:, None]
+        for c in range(4):
+            o[..., c] = np.minimum(255, o[..., c] * mult)
+        r, b = o[..., 2].copy(), o[..., 0].copy()               # BGRA: red drifts right, blue drifts left
+        o[:, 1:, 2] = r[:, :-1]
+        o[:, :-1, 0] = b[:, 1:]
+        if self._gl[0] <= 0 and self.rng.random() < 0.004 * fx:
+            self.glitch(0.6)
+        if self._gl[0] > 0:
+            _, y0, hh, dx = self._gl
+            seg = o[y0:y0 + hh]
+            o[y0:y0 + hh] = np.roll(seg, dx, axis=1)
+            self._gl[0] -= 1
+        np.maximum(o[..., 3], o[..., :3].max(axis=2), out=o[..., 3])       # keep premultiplied colour valid

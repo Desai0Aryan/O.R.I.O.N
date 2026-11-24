@@ -9,18 +9,19 @@ import time
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QCursor, QBrush, QColor, QConicalGradient, QDesktopServices, QFont, QFontMetrics, QIcon,
                            QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
                            QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget, QCompleter)
+                               QPushButton, QScrollArea, QSizeGrip, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget, QCompleter)
 
 from . import attachments as att
 from . import sources
 from .hologram import THEMES, Hologram
 from .mood import EMOTIONS
-from .platform_tweaks import Hotkey, mac_menubar_app, show_on_all_spaces
+from .platform_tweaks import Hotkey, mac_menubar_app, make_holographic, show_on_all_spaces
+from .ui_holo import HoloCaption, HoloWindow
 from .sounds import Sounds
 from .uikit import cpen, hud_font, lerp, rgba
 from .ui_views import MindView, StatusView, WeatherCard
@@ -64,6 +65,7 @@ class OrbWidget(QWidget):
         self._last_level = 0.0
         self._ms, self._frames = 0.0, 0
         self.theme = "arc"
+        self.countdown = ""
         self._booted = False
         self._resize()
         self._build_holo()
@@ -164,6 +166,10 @@ class OrbWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.drawImage(self.rect(), img)
+        if self.countdown:                                       # the nearest timer, written under him in light
+            p.setFont(hud_font(max(9, int(self.S * 0.075)), 2.0, mono=True))
+            p.setPen(QColor(220, 240, 255, 215))
+            p.drawText(QRectF(0, self.height() * 0.47 + self.S * 0.30 * 2.25, self.width(), 24), Qt.AlignHCenter, self.countdown)
         p.end()
         self._ms = self._ms * 0.9 + (time.perf_counter() - t0) * 1000 * 0.1
         self._frames += 1
@@ -331,7 +337,12 @@ class ChatPanel(HudFrame):
         self.name = name
         self.pending = []
         self._empty = None
-        self.setFixedSize(380, 520)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle(name)
+        self.setMinimumSize(360, 440)
+        self.resize(430, 680)
+        self._drag = None
         self.setStyleSheet(STYLE)
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 16)
@@ -450,8 +461,37 @@ class ChatPanel(HudFrame):
         self.completer.popup().setStyleSheet(MENU_QSS)
         self.input.setCompleter(self.completer)
 
+        self.grip = QSizeGrip(self)
+        self.grip.setFixedSize(16, 16)
         self.attachReady.connect(lambda a: self.add_items([a]))
         self.notice.connect(lambda t: self.add_message("system", t))
+
+    # ----- it is its own little app: drag by the header, resize from the corner, Esc hides -----
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.grip.move(self.width() - 20, self.height() - 20)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and e.position().y() < 84:
+            self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape or (e.key() == Qt.Key_W and e.modifiers() & (Qt.ControlModifier | Qt.MetaModifier)):
+            self.closeRequested.emit()
+        else:
+            super().keyPressEvent(e)
+
+    def moveEvent(self, e):
+        super().moveEvent(e)
+        if self.isVisible():
+            self.host.save_panel_geometry()
 
     # ----- tabs, theme, cards -----
     def set_tab(self, i):
@@ -714,7 +754,9 @@ def orb_icon(color="#3d8bff"):
 # =====================================================================================================
 #  The overlay window
 # =====================================================================================================
-class Overlay(QWidget):
+class Overlay(QObject):
+    """Controller: the hologram floats free on the desktop (HoloWindow), his words glow beside it (HoloCaption),
+    and the chat is its own window (ChatPanel) that you pull up when you want it."""
     CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
     def __init__(self, cfg, core, ubridge):
@@ -727,16 +769,7 @@ class Overlay(QWidget):
         self.margin = int(u.get("margin", 24))
         self.corner = u.get("corner", "bottom-right") if u.get("corner") in self.CORNERS else "bottom-right"
         self._emotion, self._state, self._mood_text = "neutral", "idle", ""
-
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAcceptDrops(True)
-        try:
-            self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)
-        except Exception:
-            pass
-        self.setWindowOpacity(float(u.get("opacity", 0.98)))
-        self.setWindowTitle(self.name)
+        self.chat_on_top = bool(u.get("chat_on_top", False))
 
         self.sounds = Sounds(u.get("sounds", True), u.get("sound_volume", 0.35))
         self.theme = core.mem.jget("ui_theme", None) or u.get("theme", "arc")
@@ -745,23 +778,19 @@ class Overlay(QWidget):
         self.orb = OrbWidget(int(u.get("orb_size", 150)), self.accent, u.get("quality", 1.25))
         self.orb.theme = self.theme
         self.orb.holo.set_theme(self.theme)
+        self.orb.holo.fx = float(u.get("holo_fx", 1.0))
         self.accent = THEMES[self.theme][3]
+        self.holo_win = HoloWindow(self, self.orb)
+        self.cap = HoloCaption(self.accent)
         self._last_active = time.monotonic()
         self._weather_line = ""
         self._boot_text, self._boot_i = "", 0
-        self.caption = QLabel("")
-        self.caption.setWordWrap(True)
-        self.caption.hide()
+        self._hidden = []
         self.panel = ChatPanel(self.name, self.accent, core.listen_enabled, self, cfg.get("user_name", ""))
+        if self.chat_on_top:
+            self.panel.setWindowFlags(self.panel.windowFlags() | Qt.WindowStaysOnTopHint)
         self.panel.hide()
-        self.lay = QVBoxLayout(self)
-        self.lay.setContentsMargins(14, 14, 14, 14)
-        self.lay.setSpacing(6)
-        self._relayout()
-
-        self.cap_timer = QTimer(self)
-        self.cap_timer.setSingleShot(True)
-        self.cap_timer.timeout.connect(self._hide_caption)
+        self._restore_panel_geometry()
 
         self.orb.clicked.connect(self.toggle_panel)
         self.orb.dragStart.connect(self._drag_start)
@@ -781,18 +810,115 @@ class Overlay(QWidget):
         self.look_timer.start(60)
         self.boot_timer = QTimer(self)
         self.boot_timer.timeout.connect(self._boot_step)
+        self.clock_timer = QTimer(self)                      # running timers wrap around him as rings
+        self.clock_timer.timeout.connect(self._timer_tick)
+        self.clock_timer.start(1000)
         self.hotkey = None
         combo = u.get("hotkey", "<ctrl>+<alt>+o")
         if combo:
             self.hotkey = Hotkey(combo, lambda: ubridge.emit_event("hotkey"))
-        QTimer.singleShot(600, lambda: show_on_all_spaces(self))
-
+        QApplication.instance().applicationStateChanged.connect(self._app_state)   # clicking his Dock icon opens the chat
+        self._app_ready = False
+        QTimer.singleShot(1500, lambda: setattr(self, "_app_ready", True))
         self._tray()
-        self._fit()
         if u.get("start_expanded", False):
             self.toggle_panel()
 
-    # ----- theme, gaze, boot -----
+    # ----- windows -----
+    def show(self):
+        self.holo_win.show()
+        self._place()
+        QTimer.singleShot(400, self._native_polish)
+
+    def _native_polish(self):
+        for w in (self.holo_win, self.cap):
+            make_holographic(w)
+            show_on_all_spaces(w)
+        show_on_all_spaces(self.panel) if self.panel.isVisible() else None
+
+    def hide_all(self):
+        self._hidden = [w for w in (self.holo_win, self.cap, self.panel) if w.isVisible()]
+        for w in self._hidden:
+            w.hide()
+
+    def show_all(self):
+        for w in self._hidden:
+            w.show()
+        self._hidden = []
+
+    def _screen(self):
+        return QApplication.screenAt(self.holo_win.frameGeometry().center()) or QApplication.primaryScreen()
+
+    def refit(self):                                         # kept for the chat panel: nothing to refit any more
+        pass
+
+    def resize_orb(self, k):
+        self.orb.set_scale(max(0.5, min(2.2, self.orb.S / self.orb.base_size * k)))
+        self.holo_win.refresh_shape()
+        self._place(keep_centre=True)
+
+    def _place(self, keep_centre=False):
+        scr = self._screen().availableGeometry()
+        w, h = self.holo_win.width(), self.holo_win.height()
+        if keep_centre:
+            c = self.holo_win.geometry().center()
+            x, y = c.x() - w // 2, c.y() - h // 2
+        else:
+            saved = self.core.mem.jget("orb_pos", None)
+            if isinstance(saved, list) and len(saved) == 2 and scr.adjusted(-w, -h, w, h).contains(QPoint(*saved)):
+                x, y = saved
+            else:
+                m = self.margin
+                x = scr.right() - w - m + 1 if self.corner.endswith("right") else scr.left() + m
+                y = scr.bottom() - h - m + 1 if self.corner.startswith("bottom") else scr.top() + m
+        x = max(scr.left() - w // 3, min(scr.right() - w * 2 // 3, x))
+        y = max(scr.top() - h // 4, min(scr.bottom() - h * 3 // 4, y))
+        self.holo_win.move(int(x), int(y))
+        self._place_caption()
+
+    def _place_caption(self):
+        if self.cap.isVisible():
+            self.cap.place_near(self.holo_win.geometry(), self.corner, self._screen().availableGeometry())
+
+    def _restore_panel_geometry(self):
+        g = self.core.mem.jget("chat_geo", None)
+        if isinstance(g, list) and len(g) == 4:
+            scr = QApplication.primaryScreen().availableGeometry()
+            r = QRect(*g)
+            if scr.intersects(r) and r.width() >= 360 and r.height() >= 440:
+                self.panel.setGeometry(r)
+                return
+        scr = self._screen().availableGeometry()
+        h = max(440, min(700, scr.height() - 120))
+        self.panel.resize(430, h)
+        x = scr.right() - 430 - self.margin if self.corner.endswith("right") else scr.left() + self.margin
+        self.panel.move(x - (self.holo_win.width() + 12 if self.corner.endswith("right") else -self.holo_win.width() - 12), scr.top() + 50)
+
+    def save_panel_geometry(self):
+        g = self.panel.geometry()
+        self._geo_pending = [g.x(), g.y(), g.width(), g.height()]
+        if not getattr(self, "_geo_timer", None):
+            self._geo_timer = QTimer(self)
+            self._geo_timer.setSingleShot(True)
+            self._geo_timer.timeout.connect(lambda: self.core.mem.jset("chat_geo", self._geo_pending))
+        self._geo_timer.start(800)
+
+    def toggle_panel(self):
+        if self.panel.isVisible() and not self.panel.isMinimized():
+            self.panel.hide()
+            return
+        self.cap.hide_text()
+        self.panel.showNormal()
+        self.panel.raise_()
+        self.panel.activateWindow()
+        self.panel.input.setFocus()
+        show_on_all_spaces(self.panel)
+
+    def _app_state(self, st):
+        if st == Qt.ApplicationActive and self._app_ready and not self.panel.isVisible() and getattr(self, "_dock", False):
+            self.toggle_panel()
+
+    # ----- theme, gaze, timers, boot -----
     def apply_theme(self, name, save=True):
         if name not in THEMES:
             return False
@@ -800,6 +926,7 @@ class Overlay(QWidget):
         self.accent = THEMES[name][3]
         self.orb.set_theme(name)
         self.panel.set_accent(self.accent)
+        self.cap.set_accent(self.accent)
         if save:
             self.core.mem.jset("ui_theme", name)
         return True
@@ -824,6 +951,32 @@ class Overlay(QWidget):
             e = min(e, 0.58)                                 # drifts into a dim, slow sleep
         self.orb.holo.energy += (e - self.orb.holo.energy) * 0.02
 
+    def set_timers(self, items):
+        """items: dicts with 'at' (epoch seconds) and optional 'start'."""
+        now = time.time()
+        fr = []
+        for it in items[:3]:
+            total = max(1.0, it["at"] - it.get("start", it["at"] - 1))
+            fr.append(max(0.0, min(1.0, (it["at"] - now) / total)))
+        self.orb.holo.timers = fr
+        if items:
+            left = max(0, int(items[0]["at"] - now))
+            h, rem = divmod(left, 3600)
+            m, s = divmod(rem, 60)
+            self.orb.countdown = f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+        else:
+            self.orb.countdown = ""
+
+    def _timer_tick(self):
+        if getattr(self, "_demo_timers", False):
+            return
+        try:
+            a = self.core.agent
+            items = [i for i in (a.clock.pending() if a.clock else []) if i.get("kind", "timer") == "timer" or "start" in i]
+        except Exception:
+            items = []
+        self.set_timers(items)
+
     def show_boot(self):
         try:
             st = self.core.status()
@@ -834,80 +987,34 @@ class Overlay(QWidget):
         except Exception:
             lines = [f"> {self.name.upper()} CORE ONLINE"]
         self._boot_text, self._boot_i = "\n".join(lines), 0
+        if self.captions_on and not self.panel.isVisible():
+            self.cap.show_text(self._boot_text, mono=True, cps=0, hold_ms=3500)
+            self._place_caption()
         self.boot_timer.start(22)
 
     def _boot_step(self):
         self._boot_i += 2
-        txt = self._boot_text[:self._boot_i]
-        if not self.panel.isVisible():
-            font = hud_font(11, 1.2, mono=True)
-            self.caption.setFont(font)
-            self.caption.setStyleSheet("background: rgba(4,10,26,225); border: 1px solid " + self.accent +
-                                       "; border-radius: 4px; padding: 8px 12px; color: #9fe0ff;")
-            self.caption.setText(txt + ("█" if self._boot_i < len(self._boot_text) else ""))
-            self.caption.setFixedWidth(270)
-            fm = QFontMetrics(font)
-            self.caption.setFixedHeight(fm.lineSpacing() * (txt.count("\n") + 1) + 22)
-            self.caption.show()
-            self._fit()
         if self._boot_i >= len(self._boot_text):
             self.boot_timer.stop()
-            self.cap_timer.start(3500)
+        self.cap.shown = self._boot_i
 
-    # ----- layout and position -----
-    def _relayout(self):
-        for w in (self.panel, self.caption, self.orb):
-            self.lay.removeWidget(w)
-        order = [self.panel, self.caption, self.orb] if self.corner.startswith("bottom") else \
-                [self.orb, self.caption, self.panel]
-        align = Qt.AlignRight if self.corner.endswith("right") else Qt.AlignLeft
-        for w in order:
-            self.lay.addWidget(w, 0, align)
-
-    def _fit(self):
-        self.lay.activate()
-        self.adjustSize()
-        self._place()
-
-    def refit(self):
-        self._fit()
-
-    def _screen(self):
-        return (QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen())
-
-    def _place(self):
-        scr = self._screen().availableGeometry()
-        w, h, m = self.width(), self.height(), self.margin
-        x = scr.right() - w - m + 1 if self.corner.endswith("right") else scr.left() + m
-        y = scr.bottom() - h - m + 1 if self.corner.startswith("bottom") else scr.top() + m
-        self.move(x, y)
-
-    def toggle_panel(self):
-        show = not self.panel.isVisible()
-        if show:
-            self._hide_caption()
-            avail = self._screen().availableGeometry().height()
-            self.orb.set_scale(0.55)                                  # the core shrinks to make room
-            self.panel.setFixedHeight(int(max(360, min(560, avail - self.orb.height() - 90))))
-        else:
-            self.orb.set_scale(1.0)
-        self.panel.setVisible(show)
-        if show:
-            self.panel.input.setFocus()
-        self._fit()
-
+    # ----- moving him around -----
     def _drag_start(self, gp):
-        self._off = gp - self.frameGeometry().topLeft()
+        self._off = gp - self.holo_win.frameGeometry().topLeft()
+        self.holo_win.dragging = True
 
     def _drag_to(self, gp):
-        self.move(gp - self._off)
+        self.holo_win.move(gp - self._off)
+        self._place_caption()
 
     def _dropped(self, gp):
+        self.holo_win.dragging = False
         scr = (QApplication.screenAt(gp) or QApplication.primaryScreen()).availableGeometry()
         c = scr.center()
         self.corner = f"{'top' if gp.y() < c.y() else 'bottom'}-{'left' if gp.x() < c.x() else 'right'}"
-        self._relayout()
-        self._fit()
+        p = self.holo_win.pos()
+        self.core.mem.jset("orb_pos", [p.x(), p.y()])         # he stays exactly where you put him
+        self._place_caption()
 
     # ----- drag and drop files onto Orion -----
     def dragEnterEvent(self, e):
@@ -926,40 +1033,25 @@ class Overlay(QWidget):
     # ----- screenshots -----
     def take_screenshot(self):
         scr = self._screen()
-        self.hide()
+        self.hide_all()
         QApplication.processEvents()
-        QTimer.singleShot(350, lambda: self._grab(scr))
+        QTimer.singleShot(400, lambda: self._grab(scr))
 
     def _grab(self, scr):
         img = scr.grabWindow(0).toImage()
-        self.show()
-        self._place()
+        self.show_all()
         stamp = time.strftime("%H-%M-%S")
         self.panel.add_items([att.from_qimage(img, f"screenshot {stamp}.png")])
 
-    # ----- captions -----
+    # ----- captions: his words float beside him as glowing text -----
     def show_caption(self, text, muted=False):
         if not self.captions_on or self.panel.isVisible() or not text:
             return
-        shown = text if len(text) <= 220 else text[:217] + "..."
-        font = hud_font(13, italic=muted)
-        self.caption.setFont(font)
-        self.caption.setStyleSheet(
-            "background: rgba(6,13,32,232); border: 1px solid rgba(80,165,255,140); border-radius: 5px; "
-            f"padding: 9px 14px; color: {'#9aa6c4' if muted else '#eaf3ff'};")
-        self.caption.setText(shown)
-        fm = QFontMetrics(font)
-        w = max(120, min(330, fm.horizontalAdvance(shown) + 40))
-        self.caption.setFixedWidth(w)
-        self.caption.setFixedHeight(fm.boundingRect(0, 0, w - 30, 100000, Qt.TextWordWrap, shown).height() + 24)
-        self.caption.show()
-        self._fit()
-        self.cap_timer.start(max(3000, min(14000, len(text) * 70)))
+        self.cap.show_text(text, muted=muted)
+        self._place_caption()
 
     def _hide_caption(self):
-        if self.caption.isVisible():
-            self.caption.hide()
-            self._fit()
+        self.cap.hide_text()
 
     # ----- events from the engine -----
     def on_event(self, kind, d):
@@ -973,6 +1065,7 @@ class Overlay(QWidget):
                     self.sounds.play("wake")
                 elif d["state"] == "thinking":
                     self.sounds.play("think")
+                self.orb.holo.glitch(0.5)
             self._state = d["state"]
             self.orb.set_state(self._state)
             self.panel.set_state(self._state, self._mood_text or self._emotion)
@@ -982,6 +1075,7 @@ class Overlay(QWidget):
         elif kind == "hearing":
             self.orb.hear()
             self.orb.holo.shockwave(1)
+            self.orb.holo.glitch(0.3)
         elif kind == "mood":
             self._emotion = d["emotion"]
             self._mood_text = d.get("mood", "")
@@ -1010,8 +1104,6 @@ class Overlay(QWidget):
             self._command(d.get("name"), d.get("arg", ""))
         elif kind == "hotkey":
             self.toggle_panel()
-            self.raise_()
-            self.activateWindow()
         elif kind == "system":
             self.panel.add_message("system", d.get("text", ""))
             if d.get("level") == "error":
@@ -1019,7 +1111,7 @@ class Overlay(QWidget):
                 self.panel.set_system("ATTENTION", ok=False)
                 self.show_caption(d.get("text", ""), muted=True)
         elif kind == "confirm":
-            ans = QMessageBox.question(self, self.name, d["question"])
+            ans = QMessageBox.question(self.panel if self.panel.isVisible() else None, self.name, d["question"])
             d["result"]["ok"] = ans == QMessageBox.Yes
             d["done"].set()
         elif kind == "quit":
@@ -1064,6 +1156,7 @@ class Overlay(QWidget):
     # ----- tray and menu -----
     def _tray(self):
         self.tray = QSystemTrayIcon(orb_icon(), self)
+        QApplication.setWindowIcon(orb_icon())
         self.tray.setToolTip(self.name)
         self.tray.setContextMenu(self._build_menu())
         self.tray.activated.connect(lambda r: self.toggle_panel() if r == QSystemTrayIcon.Trigger else None)
@@ -1072,7 +1165,13 @@ class Overlay(QWidget):
     def _build_menu(self):
         m = QMenu()
         m.setStyleSheet(MENU_QSS)
-        m.addAction("Show / hide chat", self.toggle_panel)
+        m.addAction("Open chat window", self.toggle_panel)
+        m.addAction("Resize: bigger", lambda: self.resize_orb(1.2))
+        m.addAction("Resize: smaller", lambda: self.resize_orb(1 / 1.2))
+        fx = QAction("Projector effects", m, checkable=True)
+        fx.setChecked(self.orb.holo.fx > 0)
+        fx.toggled.connect(lambda on: setattr(self.orb.holo, "fx", 1.0 if on else 0.0))
+        m.addAction(fx)
         m.addAction("Stop talking", self.core.stop_speaking)
         if self.core.listen_enabled:
             act = QAction("Mute microphone", m, checkable=True)
@@ -1096,8 +1195,8 @@ class Overlay(QWidget):
 
     def _set_corner(self, c):
         self.corner = c
-        self._relayout()
-        self._fit()
+        self.core.mem.jset("orb_pos", None)
+        self._place()
 
     def quit_app(self):
         self.show_caption("Saving what I learned...", muted=True)
@@ -1105,12 +1204,16 @@ class Overlay(QWidget):
         self.core.shutdown_async(done=lambda: self.ubridge.emit_event("quit"))
 
 
-def run_ui(cfg):
+def run_ui(cfg, demo=False):
     from .core import Core
+    if demo:
+        _demo_setup(cfg)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(cfg.get("assistant_name", "Orion"))
-    mac_menubar_app()
+    dock = bool(cfg.get("ui", {}).get("dock_icon", True))
+    if not dock:
+        mac_menubar_app()                                      # menu-bar only: no Dock icon at all
     ubridge = UiBridge()
 
     def confirm(question):
@@ -1121,8 +1224,47 @@ def run_ui(cfg):
 
     core = Core(cfg, ubridge.emit_event, confirm=confirm)
     overlay = Overlay(cfg, core, ubridge)
+    overlay._dock = dock
     overlay.show()
     core.start()
+    if demo:
+        _demo_script(overlay, ubridge, core)
     code = app.exec()
     core.shutdown()
     return code
+
+
+# ----- --demo: a scripted tour so you can see the look without any brain or API key -----
+def _demo_setup(cfg):
+    from .brain import Brain
+    cfg.setdefault("voice", {}).update(speak=False, listen=False)
+    cfg["bridge"] = {"enabled": False}
+    cfg.setdefault("learning", {})["curiosity"] = False
+    Brain.chat = lambda self, *a, **k: ('{"emotion":"amused","speech":"This is demo mode, so I only have canned lines. '
+                                        'Add a brain key and I will really think.","display":"","mood":"playful","actions":[]}')
+
+
+def _demo_script(ov, ub, core):
+    steps = [(0.5, lambda: ub.emit_event("ready", brain="demo", listening=False)),
+             (5.5, lambda: ub.emit_event("assistant", speech="Hello. I'm floating right on your desktop, no window around me.", emotion="happy")),
+             (9.5, lambda: ub.emit_event("state", state="listening")),
+             (11.5, lambda: ub.emit_event("hearing")),
+             (12.5, lambda: ub.emit_event("state", state="thinking")),
+             (15.0, lambda: ub.emit_event("state", state="speaking")),
+             (15.1, lambda: ub.emit_event("assistant", speech="Click me, or press the hotkey, to open my chat window.", emotion="curious")),
+             (20.0, lambda: ub.emit_event("state", state="idle")),
+             (20.5, lambda: ov.apply_theme("ember", save=False)),
+             (24.0, lambda: ov.apply_theme("aurora", save=False)),
+             (27.5, lambda: ov.apply_theme("nebula", save=False)),
+             (31.0, lambda: ov.apply_theme("arc", save=False)),
+             (31.5, lambda: (setattr(ov, "_demo_timers", True), ov.set_timers([{"at": time.time() + 90, "start": time.time() - 30}])))]
+    for secs, fn in steps:
+        QTimer.singleShot(int(secs * 1000), fn)
+    def level():
+        t = time.monotonic()
+        if ov._state == "speaking":
+            ub.emit_event("level", value=0.4 + 0.35 * abs(math.sin(t * 6)), bands=None)
+    lt = QTimer(ov)
+    lt.timeout.connect(level)
+    lt.start(60)
+    ov._demo_timer = lt

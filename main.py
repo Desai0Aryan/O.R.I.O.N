@@ -2,7 +2,7 @@
    python main.py            floating orb in the corner of your screen (default)
    python main.py --voice    same, with the microphone on (say 'Orion, ...')
    python main.py --text     plain terminal chat
-   python main.py --mute     no spoken voice"""
+   python main.py --mute     no spoken voice\n   python main.py --demo     preview the look (no brain needed)"""
 import argparse
 import os
 import sys
@@ -55,6 +55,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--voice", action="store_true", help="turn the microphone on")
     ap.add_argument("--text", action="store_true", help="terminal chat instead of the floating UI")
+    ap.add_argument("--demo", action="store_true", help="preview the hologram and chat window with no brain or API key")
     ap.add_argument("--mute", action="store_true", help="do not speak out loud")
     args = ap.parse_args()
 
@@ -72,7 +73,7 @@ def main():
         except ImportError as e:
             print(f"UI unavailable ({e}). Run install again or use --text. Falling back to terminal.")
         else:
-            return run_ui(cfg)
+            return run_ui(cfg, demo=args.demo)
     return run_terminal(cfg)
 
 

@@ -204,3 +204,18 @@ Per message: one brain call (two when he uses a tool). Memory upkeep uses the fa
 `orion/memory.py`, `orion/retrieval.py`, `orion/brain.py`, `orion/voice.py`, `orion/humanize.py`, `orion/wake.py` (name matching), `orion/tools/` (internet, study, calculator), `orion/ui.py`,
 `orion/attachments.py` (files, images, PDFs), `orion/sources.py` (windows, tabs), `orion/bridge.py` (browser link),
 `extension/` (the browser companion).
+
+## What's new in v8: a hologram on your desktop, and a chat app of its own
+
+- **No container.** Orion is now a bare hologram floating over your wallpaper and windows (no frame, no box, no window
+  shadow). On a Mac, clicks pass straight through the empty space around him and only the glowing shape catches the mouse.
+  He shows on every Space and above full-screen apps. Drag him anywhere; he remembers where you left him.
+  Ctrl/Cmd + scroll over him to resize, or use the right-click menu.
+- **Projector look.** Faint scanlines with a slow bright sweep, colour fringing and the odd glitch flicker, which also
+  fires when he starts listening or thinking. Turn off with `ui.holo_fx: 0` or the right-click menu.
+- **Words as light.** Captions are glowing text beside him (no bubble), typed out as he speaks, then fading.
+- **Timer rings.** A running timer wraps around him as a ring that slowly empties, with the time written under him.
+- **The chat is its own app window.** Click him, press the hotkey (Ctrl+Alt+O), click his Dock icon or the menu-bar icon.
+  Drag it by the header, resize from the bottom-right corner, `Esc` or `Cmd+W` hides it. Size and place are remembered.
+  Set `ui.chat_on_top: true` to keep it above other apps, `ui.dock_icon: false` for menu-bar only.
+- **Try it without a brain:** `python main.py --demo` plays a short scripted tour (speech, listening, thinking, themes, timer).
