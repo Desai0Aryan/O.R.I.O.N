@@ -1,0 +1,39 @@
+# Orion configuration. Edit freely.
+assistant_name: Orion
+user_name: ""            # your name, so Orion can address you
+
+brain:
+  provider: auto         # auto | anthropic | ollama | openai_compatible
+                         # auto = Anthropic if ANTHROPIC_API_KEY is set, else local Ollama
+  anthropic_model: claude-sonnet-5-5
+  ollama_model: llama3.1:8b
+  ollama_url: http://localhost:11434
+  openai_base_url: https://api.groq.com/openai/v1   # any OpenAI-compatible endpoint
+  openai_model: llama-3.3-70b-versatile
+  max_tokens: 1024
+
+voice:
+  enabled: false         # true = talk with Orion; false = type in the terminal
+  wake_word: orion
+  stt_model: base.en     # faster-whisper model: tiny.en, base.en, small.en...
+  tts: edge              # edge (natural, needs internet) | pyttsx3 (offline, robotic)
+  tts_voice: en-GB-RyanNeural
+  silence_threshold: 0.015
+
+personality:
+  traits: "warm, witty, loyal, a little cheeky, endlessly curious, calm under pressure"
+  style: "concise and natural, like a close friend who is also a brilliant assistant"
+
+home_city: ""            # used when you say "the weather" without a city
+
+learning:
+  reflect_every: 8         # review the conversation every N turns (0 = only on exit)
+                           # each review is one extra model call; raise this if API cost matters
+  reflect_on_exit: true    # also save lessons when you say goodbye
+  consolidate_above: 120   # tidy memory once it holds more than this many facts
+
+safety:
+  confirm_screen_control: true   # ask before mouse/keyboard actions
+  confirm_shell: true            # ask before shell commands
+  confirm_claude_code: true      # ask before handing a coding job to Claude Code
+  workspace: ./workspace         # where Orion reads/writes files and code
