@@ -1,4 +1,5 @@
 """The brain: one interface over several model providers, with retries and fallback."""
+import json
 import os
 import time
 
@@ -64,29 +65,38 @@ class Brain:
         self.chain = [p] + [x for x in (self.cfg.get("fallback") or []) if x != p]
         self.last_used = p
 
-    def chat(self, system, messages, task="main", json_mode=False, max_tokens=None, retries=None):
+    def chat(self, system, messages, task="main", json_mode=False, max_tokens=None, retries=None, on_delta=None):
         """messages: [{'role': 'user'|'assistant', 'content': str}] -> reply text.
-        task='fast' uses the cheaper model for memory upkeep."""
+        task='fast' uses the cheaper model for memory upkeep.
+        on_delta(text) is called with pieces of the reply as they stream in (lets Orion start speaking early)."""
         retries = int(self.cfg.get("retries", 2)) if retries is None else retries
         errors = []
         for prov in self.chain:
             for attempt in range(retries + 1):
+                acc = []
+                cb = None
+                if on_delta:
+                    def cb(piece, acc=acc):
+                        acc.append(piece)
+                        on_delta(piece)
                 try:
-                    out = self._call(prov, system, messages, task, json_mode, max_tokens)
+                    out = self._call(prov, system, messages, task, json_mode, max_tokens, cb)
                     self.last_used = prov
                     return out
-                except requests.HTTPError as e:
-                    errors.append(f"{prov}: {_describe(e)}")
-                    status = e.response.status_code if e.response is not None else 0
-                    if status in (400, 401, 403, 404):
-                        break
-                    time.sleep(1.5 * (attempt + 1))
-                except (requests.ConnectionError, requests.Timeout) as e:
-                    errors.append(f"{prov}: {_describe(e)}")
-                    time.sleep(1.0 * (attempt + 1))
                 except Exception as e:
+                    if acc:                      # already partly spoken: keep what arrived, never repeat it
+                        self.last_used = prov
+                        return "".join(acc)
                     errors.append(f"{prov}: {_describe(e)}")
-                    break
+                    if isinstance(e, requests.HTTPError):
+                        status = e.response.status_code if e.response is not None else 0
+                        if status in (400, 401, 403, 404):
+                            break
+                        time.sleep(1.5 * (attempt + 1))
+                    elif isinstance(e, (requests.ConnectionError, requests.Timeout)):
+                        time.sleep(1.0 * (attempt + 1))
+                    else:
+                        break
         raise BrainError("; ".join(errors[-3:]) or "no brain configured")
 
     def _model(self, prov, task):
@@ -94,7 +104,7 @@ class Brain:
         fast = self.cfg.get(f"{key}_fast_model")
         return fast if (task == "fast" and fast) else self.cfg[f"{key}_model"]
 
-    def _call(self, prov, system, messages, task, json_mode, max_tokens):
+    def _request(self, prov, system, messages, task, json_mode, max_tokens, stream):
         mt = max_tokens or self.cfg.get("max_tokens", 1200)
         temp = self.cfg.get("temperature")
         model = self._model(prov, task)
@@ -105,30 +115,75 @@ class Brain:
             body = {"model": model, "max_tokens": mt, "system": system, "messages": anthropic_messages(messages)}
             if temp is not None:
                 body["temperature"] = temp
-            r = requests.post("https://api.anthropic.com/v1/messages",
-                              headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                                       "content-type": "application/json"}, json=body, timeout=120)
-            r.raise_for_status()
-            return "".join(b.get("text", "") for b in r.json()["content"])
+            if stream:
+                body["stream"] = True
+            return ("https://api.anthropic.com/v1/messages",
+                    {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}, body)
         if prov == "ollama":
-            body = {"model": model, "stream": False, "keep_alive": "30m",
+            body = {"model": model, "stream": bool(stream), "keep_alive": "30m",
                     "messages": [{"role": "system", "content": system}] + ollama_messages(messages),
                     "options": {"num_predict": mt}}
             if temp is not None:
                 body["options"]["temperature"] = temp
             if json_mode:
                 body["format"] = "json"
-            r = requests.post(self.cfg["ollama_url"].rstrip("/") + "/api/chat", json=body, timeout=300)
-            r.raise_for_status()
-            return r.json()["message"]["content"]
+            return self.cfg["ollama_url"].rstrip("/") + "/api/chat", {}, body
         if prov == "openai_compatible":
             body = {"model": model, "max_tokens": mt,
                     "messages": [{"role": "system", "content": system}] + openai_messages(messages)}
             if temp is not None:
                 body["temperature"] = temp
-            r = requests.post(self.cfg["openai_base_url"].rstrip("/") + "/chat/completions",
-                              headers={"Authorization": f"Bearer {os.getenv('OPENAI_COMPAT_API_KEY', '')}"},
-                              json=body, timeout=120)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            if stream:
+                body["stream"] = True
+            return (self.cfg["openai_base_url"].rstrip("/") + "/chat/completions",
+                    {"Authorization": f"Bearer {os.getenv('OPENAI_COMPAT_API_KEY', '')}"}, body)
         raise ValueError(f"Unknown brain provider: {prov}")
+
+    @staticmethod
+    def _whole(prov, data):
+        if prov == "anthropic":
+            return "".join(b.get("text", "") for b in data["content"])
+        if prov == "ollama":
+            return data["message"]["content"]
+        return data["choices"][0]["message"]["content"]
+
+    @staticmethod
+    def _piece(prov, line):
+        """One streamed line -> the text piece it carries ('' if none)."""
+        line = line.strip()
+        if prov != "ollama":
+            if not line.startswith("data:"):
+                return ""
+            line = line[5:].strip()
+            if line == "[DONE]":
+                return ""
+        try:
+            d = json.loads(line)
+        except ValueError:
+            return ""
+        if prov == "anthropic":
+            if d.get("type") == "error":
+                raise RuntimeError(str(d.get("error")))
+            return (d.get("delta") or {}).get("text", "") if d.get("type") == "content_block_delta" else ""
+        if prov == "ollama":
+            return (d.get("message") or {}).get("content", "")
+        ch = (d.get("choices") or [{}])[0]
+        return (ch.get("delta") or {}).get("content") or ""
+
+    def _call(self, prov, system, messages, task, json_mode, max_tokens, on_delta=None):
+        url, headers, body = self._request(prov, system, messages, task, json_mode, max_tokens, bool(on_delta))
+        if not on_delta:
+            r = requests.post(url, headers=headers, json=body, timeout=300 if prov == "ollama" else 120)
+            r.raise_for_status()
+            return self._whole(prov, r.json())
+        out = []
+        with requests.post(url, headers=headers, json=body, stream=True, timeout=(10, 120)) as r:
+            r.raise_for_status()
+            for raw in r.iter_lines():
+                if not raw:
+                    continue
+                piece = self._piece(prov, raw.decode("utf-8", "replace"))
+                if piece:
+                    out.append(piece)
+                    on_delta(piece)
+        return "".join(out)

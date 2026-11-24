@@ -1,4 +1,4 @@
-# Orion: Part 1 v5 (Core, deepened, 3D hologram)
+# Orion: Part 1 v6 (faster, hears better, smarter, online)
 
 Your personal AI companion. A holographic core floats in the corner of your screen, talks in an expressive
 voice, remembers you, learns who you are, sees what you attach, and grows over time. Tools (web, screen control, coding)
@@ -8,7 +8,7 @@ arrive in later parts; this zip is everything that already existed, made much de
 | Part | What it adds | Status |
 |------|--------------|--------|
 | 1 | Brain, personality, mood, voice, memory, learning, holographic corner UI, attachments, tabs/apps, installer, autostart | this zip |
-| 2 | Tools: weather, web search, open apps/sites, files, safe shell, "study" (learn from the internet) | next |
+| 2 | Internet tools (web search, pages, weather, news, Wikipedia, papers, study) arrived early in v6. Still to come: open apps/sites, files, safe shell | partly done |
 | 3 | Screen control (mouse/keyboard) with confirmations, vision | later |
 | 4 | Coding: hand jobs to Claude Code (uses your Claude Pro login) | later |
 | 5 | Background mode polish, better wake word | later |
@@ -86,6 +86,36 @@ It shares your tab titles and addresses with Orion while Orion runs, and sends a
 pick that tab. It never reads tabs on its own. On macOS, Safari and Chrome-family tabs can also be listed without
 the extension (macOS will ask permission); those pages are fetched from the web, so logged-in pages need a screenshot.
 
+## New in v6
+**Faster.** He now starts talking after the first sentence of his answer, while the rest is still being written,
+and the next sentence is already being voiced while the current one plays, so there are no gaps. When he needs a
+tool he says a short line ("Let me check.") first. Tools run side by side. Memory tidying no longer blocks the next turn.
+
+**Hears better.** The microphone stays open all session so no word is missed. It filters low rumble, adapts to your
+room's noise, boosts quiet talkers, ignores clicks and coughs, never hears his own voice, and decides you have finished
+after 0.6 s of quiet (`voice.end_silence`). The speech model is now `small.en` (loaded at startup), and he gives it the
+names from your life so it spells them right. For the best accuracy use `medium.en`; for the fastest, `base.en`.
+If a microphone is wrong, set `voice.input_device`.
+
+**His name.** He still shows "Orion" but says it as **Oh-ee-on** (`voice.say_name_as`; try "Oh-ree-on" or "Or-ee-on" if it
+sounds off). He also catches mis-hearings of his name ("O E on", "Oh ee on", "Oreon"), so waking him is forgiving.
+
+**Understands you.** He reasons in a fixed order: what kind of message it is, what you mean (using the conversation to resolve
+"it" and "that"), whether to answer or look it up, then checks tool results before answering. Voice input is treated as
+possibly mis-heard. When you correct him ("no, I meant...") he works out what he got wrong and learns the lesson.
+
+**The internet and public databases.** Tools: `web_search` (DuckDuckGo; add `TAVILY_API_KEY` or `BRAVE_API_KEY` to `.env`
+for better results), `read_page` (any public page or JSON API), `wikipedia`, `weather` (Open-Meteo, no key), `news`,
+`arxiv` (papers), `define`, `exchange` (currencies), `calculate`. Pages are read as data, never as orders, and addresses on
+your own network or computer are blocked. Set `home_city` and `tools.units` in `config.yaml`.
+
+**Grows his own knowledge.** `study` researches a topic across several sources and saves sourced notes he recalls later.
+When you are away he studies things from your interests and goals on his own (`learning.curiosity`, `study_every_hours`,
+`study_per_day`; set `study_per_day: 0` to stop it, each study costs a few small model calls).
+
+Honest limits: speed on a local model depends on your computer; the pronunciation could not be heard by me, only set;
+search quality without a key is basic; he does not browse logged-in sites until Part 3.
+
 ## A voice that feels human
 - `tts: edge` is free and natural. Try `en-US-AndrewNeural`, `en-US-GuyNeural`, `en-GB-RyanNeural`,
   `en-US-AriaNeural`, `en-GB-SoniaNeural` in `edge_voice`.
@@ -134,6 +164,6 @@ Per message: one brain call (two when he uses a tool). Memory upkeep uses the fa
 ## Files
 `main.py` entry, `config.yaml` settings, `orion/core.py` engine (threads, wake word, commands),
 `orion/agent.py` thinking + learning, `orion/personality.py` character and prompt, `orion/mood.py`,
-`orion/memory.py`, `orion/retrieval.py`, `orion/brain.py`, `orion/voice.py`, `orion/humanize.py`, `orion/ui.py`,
+`orion/memory.py`, `orion/retrieval.py`, `orion/brain.py`, `orion/voice.py`, `orion/humanize.py`, `orion/wake.py` (name matching), `orion/tools/` (internet, study, calculator), `orion/ui.py`,
 `orion/attachments.py` (files, images, PDFs), `orion/sources.py` (windows, tabs), `orion/bridge.py` (browser link),
 `extension/` (the browser companion).

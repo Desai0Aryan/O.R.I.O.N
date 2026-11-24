@@ -1,7 +1,7 @@
 # Orion configuration. Edit freely. Restart Orion after changes.
 assistant_name: Orion
 user_name: ""            # your name; Orion also learns it from you
-home_city: ""            # used later for weather and local questions
+home_city: ""            # default place for weather and local questions, e.g. "Malibu, CA"
 
 brain:
   provider: auto         # auto | anthropic | ollama | openai_compatible
@@ -31,11 +31,16 @@ voice:
   speak: true              # Orion talks out loud
   listen: false            # microphone on (also: python main.py --voice)
   wake_word: orion
-  wake_aliases: [orion, orian, oryan, o'ryan]   # spellings the speech recognizer may produce
+  wake_aliases: [orion, orian, oryan, o'ryan, oheeon, oreon]   # exact spellings the recogniser may produce (fuzzy matching also catches "Oh-ee-on", "O E on"...)
+  say_name_as: "Oh-ee-on"  # how he PRONOUNCES his own name out loud (the chat still shows Orion). Try "Oh-ree-on" or "Or-ee-on" if it sounds off
   conversation_window: 25  # seconds after he speaks that you can reply without saying his name
-  stt_model: base.en       # faster-whisper: tiny.en, base.en, small.en (more accurate, slower)
+  stt_model: small.en      # faster-whisper: tiny.en (fastest), base.en, small.en (accurate, default), medium.en (best, needs a good computer)
+  stt_beam: 2              # 1 = faster, 3 = slightly more accurate
+  end_silence: 0.6         # seconds of quiet that mean you finished talking (lower = quicker replies, may cut you off)
+  min_speech: 0.25         # ignore sounds shorter than this (coughs, clicks)
+  input_device: ""         # microphone name or number; blank = system default
   stt_language: en
-  silence_threshold: 0.015
+  silence_threshold: 0.012   # lower = more sensitive; he also adapts to your room's background noise
   tts: edge                # edge (natural, free, internet) | elevenlabs (most human) | piper (offline neural) | pyttsx3 (basic)
   edge_voice: en-GB-RyanNeural    # try en-US-GuyNeural, en-US-AriaNeural, en-GB-SoniaNeural, en-US-AndrewNeural
   elevenlabs_voice_id: ""         # needs ELEVENLABS_API_KEY in .env
@@ -60,12 +65,19 @@ bridge:                    # lets the browser extension share your tab list with
   enabled: true
   port: 8765
 
+tools:
+  units: imperial          # imperial (°F, mph) or metric (°C, km/h)
+  # optional better web search: put TAVILY_API_KEY (free tier) or BRAVE_API_KEY in .env; otherwise DuckDuckGo is used
+
 learning:
   reflect_every: 8         # review the conversation every N turns (0 = only on exit)
                            # each review costs one small model call; raise this to save money
   reflect_on_exit: true
   consolidate_above: 120   # tidy memory once it holds more facts than this
   profile_every_reflections: 3   # how often he updates his picture of who you are
+  curiosity: true          # while you are away he studies topics from your interests and goals and keeps notes
+  study_every_hours: 4
+  study_per_day: 2         # each study uses a few small model calls; set 0 to switch off
 
 safety:                    # used by the tool parts coming next
   confirm_screen_control: true

@@ -32,6 +32,13 @@ def clean_for_speech(text):
     return re.sub(r"\s+([,.!?;:])", r"\1", t)
 
 
+def pronounce(text, name, say_as):
+    """Spell his name the way he should say it (the chat still shows the normal spelling)."""
+    if not say_as or not name or say_as == name:
+        return text
+    return re.sub(rf"\b{re.escape(name)}\b", say_as, text, flags=re.I)
+
+
 def split_sentences(text, max_len=220):
     parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text) if p.strip()]
     merged = []

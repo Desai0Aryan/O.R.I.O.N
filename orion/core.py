@@ -11,6 +11,7 @@ from .brain import BrainError
 from .bridge import Bridge
 from .memory import Memory
 from .memory import DATA
+from .wake import find_wake, strip_wake
 
 HELP = ("Commands: /memory (what I know about you), /profile (how I understand you), "
         "/journal (my recent reflections), /forget <text> (delete memories containing that text), "
@@ -43,7 +44,8 @@ class Core:
                 self.voice = Voice(cfg, self._voice_event)
             except Exception as e:
                 self.emit("system", level="warn", text=f"Voice unavailable: {e}")
-        self.agent = Agent(cfg, self.mem, self._on_reply, self.confirm)
+        self.agent = Agent(cfg, self.mem, self._on_reply, self.confirm,
+                           on_speech=self._on_speech if (self.voice and self.speak_enabled) else None)
         self._stop = threading.Event()
         self._proc_lock = threading.Lock()
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -89,8 +91,12 @@ class Core:
         self.emit("assistant", speech=reply["speech"], display=reply["display"], emotion=reply["emotion"],
                   mood=reply["mood"])
         self.emit("mood", emotion=reply["emotion"], mood=reply["mood"])
-        if self.voice and self.speak_enabled and reply["speech"]:
+        if self.voice and self.speak_enabled and reply["speech"] and not reply.get("streamed"):
             self.voice.speak(reply["speech"], reply["emotion"])
+
+    def _on_speech(self, sentence, emotion):
+        """A finished sentence of a reply that is still being written: speak it right away."""
+        self.voice.speak(sentence, emotion)
 
     # ---------- lifecycle ----------
     def start(self):
@@ -98,6 +104,8 @@ class Core:
         if self.listen_enabled and self.voice:
             threading.Thread(target=self._listen_loop, daemon=True).start()
         threading.Thread(target=self._greet, daemon=True).start()
+        if self.cfg.get("learning", {}).get("curiosity", True):
+            threading.Thread(target=self._curiosity_loop, daemon=True).start()
         self._update_state()
 
     def _greet(self):
@@ -154,7 +162,44 @@ class Core:
         self._pool.submit(self.process, text, "typed", attachments)
 
     # ---------- listening ----------
+    def _vocab(self):
+        """Names from what he knows about you, so the recogniser spells them right."""
+        words, seen = [], set()
+        for r in self.mem.fact_rows()[:80]:
+            for w in re.findall(r"\b[A-Z][a-zA-Z]{2,}\b", r["fact"]):
+                if w.lower() not in seen and w not in ("The", "Has", "Is", "Likes", "Works", "Wants", "Prefers"):
+                    seen.add(w.lower())
+                    words.append(w)
+        return words[:25]
+
+    def _curiosity_loop(self):
+        """While you are away he studies what interests you, and keeps notes for later."""
+        hours = float(self.cfg.get("learning", {}).get("study_every_hours", 4))
+        if self._stop.wait(600):
+            return
+        while not self._stop.is_set():
+            idle = not (self._thinking or self._speaking or self._hearing) and time.time() > self.active_until + 120
+            if idle and self._proc_lock.acquire(blocking=False):
+                try:
+                    topic = self.agent.explore()
+                    if topic:
+                        self.emit("system", level="info", text=f"I read up on “{topic}” while you were busy.")
+                except Exception:
+                    pass
+                finally:
+                    self._proc_lock.release()
+            if self._stop.wait(hours * 3600):
+                return
+
     def _listen_loop(self):
+        try:
+            self.emit("system", level="info", text="Warming up my hearing...")
+            self.voice.vocab = self._vocab()
+            self.voice.preload()
+            self.emit("system", level="info", text="I can hear you now.")
+        except Exception as e:
+            self.emit("system", level="error", text=f"Microphone problem: {e}. Mic muted.")
+            self.set_mic_muted(True)
         while not self._stop.is_set():
             if self.mic_muted or self._thinking or (self.voice and self.voice.is_speaking()):
                 time.sleep(0.2)
@@ -177,10 +222,9 @@ class Core:
 
     def _gate(self, heard):
         """Wake word, or a follow-up inside the conversation window."""
-        low = heard.lower()
-        hit = next((w for w in self.wake_words if w in low), None)
-        if hit:
-            cleaned = re.sub(rf"\b(hey|hi|ok|okay)?[, ]*{re.escape(hit)}\b[,.!?]*", "", heard, flags=re.I).strip()
+        span = find_wake(heard, self.wake_words)
+        if span:
+            cleaned = strip_wake(heard, span)
             return cleaned or "(The user just said your name to get your attention.)"
         return heard if time.time() < self.active_until else None
 
@@ -196,7 +240,7 @@ class Core:
             self.emit("user", text=text, source=source, attachments=att.public_view(attachments))
             self._update_state()
             try:
-                self.agent.handle(text, attachments)
+                self.agent.handle(text, attachments, source)
             except BrainError as e:
                 self.emit("system", level="error", text=f"My brain is unreachable right now ({e}).")
                 if self.voice and self.speak_enabled:
