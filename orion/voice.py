@@ -192,19 +192,14 @@ class Voice:
     # ----- playback with a real audio envelope for the orb -----
     @staticmethod
     def _envelope(snd):
+        """Per-40ms loudness plus bass/mid/high energy of the clip, so the hologram follows his actual voice."""
         try:
-            import numpy as np
             import pygame
+            from .hologram import envelope_from_samples
             arr = pygame.sndarray.array(snd).astype("float32")
             if arr.ndim > 1:
                 arr = arr.mean(axis=1)
-            win = max(1, int(pygame.mixer.get_init()[0] * 0.04))
-            n = len(arr) // win
-            if n <= 0:
-                return None
-            a = np.abs(arr[:n * win]).reshape(n, win).mean(axis=1)
-            peak = float(a.max()) or 1.0
-            return ((a / peak) ** 0.7).tolist()
+            return envelope_from_samples(arr, pygame.mixer.get_init()[0])
         except Exception:
             return None
 
@@ -221,8 +216,11 @@ class Voice:
                 ch.stop()
                 break
             idx = int((time.monotonic() - t0) / 0.04)
-            lvl = env[min(idx, len(env) - 1)] if env else 0.35 + 0.3 * random.random()
-            self.cb("level", source="voice", value=float(lvl))
+            if env is not None:
+                row = env[min(idx, len(env) - 1)]
+                self.cb("level", source="voice", value=float(row[0]), bands=(float(row[1]), float(row[2]), float(row[3])))
+            else:
+                self.cb("level", source="voice", value=0.35 + 0.3 * random.random())
             time.sleep(0.03)
         try:
             os.remove(path)

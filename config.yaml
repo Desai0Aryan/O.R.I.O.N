@@ -48,7 +48,8 @@ voice:
 ui:
   enabled: true
   corner: bottom-right     # top-left | top-right | bottom-left | bottom-right (drag the core to move it)
-  orb_size: 130            # bigger number = bigger hologram
+  orb_size: 150            # bigger number = bigger hologram
+  quality: 1.25            # 1.0 = fastest, up to 2.0 = sharpest (it also lowers itself on slow computers)
   margin: 24
   opacity: 0.98
   accent: "#5aa8ff"        # colour of your message bubbles

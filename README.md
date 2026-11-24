@@ -1,4 +1,4 @@
-# Orion: Part 1 v4 (Core, deepened)
+# Orion: Part 1 v5 (Core, deepened, 3D hologram)
 
 Your personal AI companion. A holographic core floats in the corner of your screen, talks in an expressive
 voice, remembers you, learns who you are, sees what you attach, and grows over time. Tools (web, screen control, coding)
@@ -42,18 +42,20 @@ Set `user_name` in `config.yaml` (he also learns your name by asking).
 - Terminal-only chat: add `--text`. Silent mode: add `--mute`.
 - **Start at login:** `enable_autostart.bat` (Windows) or `bash enable_autostart.sh` (Mac/Linux), each prints how to undo.
 
-## The corner UI (designed from your concept image)
-- A holographic core floats in the corner (default bottom-right): a glass sphere with a four-pointed star,
-  crystal blades above and below, orbital rings, a halo, rising data particles and a glowing base platform.
-- It is alive. **Speaking:** sharp light spikes burst from the core and the blades stretch with his real voice.
-  **Listening:** rings contract inward. **Thinking:** rings spin fast and a scan line sweeps through.
-  **Muted:** it dims to grey. Its tint shifts subtly with his mood.
+## The corner UI (a real 3D particle hologram)
+- A holographic core floats in the corner (default bottom-right). It is a live 3D point cloud, not a flat picture:
+  thousands of glowing particles form a rotating sphere with a bright core, a wireframe globe, a data mesh with
+  travelling packets, orbital rings with comet heads, a dial ring, rotating data cubes, drifting dust and a projector base.
+- It is alive. **Speaking:** light spikes burst outward, driven by the bass, mid and high frequencies of his real voice
+  (bass pushes the shell, mids add turbulence, highs sparkle). **Listening:** rings contract inward and it pulses when it hears you.
+  **Thinking:** the sphere spins faster and a scan sweeps through. **Muted:** it dims to grey. The tint shifts with his mood.
+- Performance: it is drawn on the CPU with numpy (no GPU needed). On a slow computer it automatically lowers its own
+  quality. In `config.yaml`, `ui.quality` (1.0 fastest, up to 2.0 sharpest) and `ui.orb_size` control it.
 - **Drag** it to any corner and it snaps there. **Click** it to open the chat (the core shrinks to make room),
   **right-click** (or the tray icon) for the menu: stop talking, mute mic, move corner, quit.
 - The chat is a HUD panel: system status, signal bars that move with his voice, a live state line
   (`> LISTENING...`, `> PROCESSING...`, `> READY.`), and `/memory`, `/profile`, `/journal`, `/forget`, `/token`, `/help`.
 - Live captions show what he says when the chat is closed.
-- Tweak size, corner, colours and captions in the `ui:` section of `config.yaml`.
 
 ## The + button: attachments, tabs and apps
 Click **+** next to the message box:

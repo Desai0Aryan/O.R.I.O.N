@@ -11,13 +11,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient, QDesktopServices, QFont, QFontMetrics, QIcon,
-                           QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
+                           QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
                            QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from . import attachments as att
 from . import sources
+from .hologram import Hologram
 from .mood import EMOTIONS
 
 EXT_DIR = Path(__file__).resolve().parents[1] / "extension"
@@ -65,35 +66,31 @@ class UiBridge(QObject):
 
 
 # =====================================================================================================
-#  The holographic core
+#  The holographic core (a real 3D particle hologram, see hologram.py)
 # =====================================================================================================
 class OrbWidget(QWidget):
     clicked = Signal()
     dragStart = Signal(QPoint)
     dragTo = Signal(QPoint)
     dropped = Signal(QPoint)
-    NPART = 36
-    NSPIKE = 48
 
-    def __init__(self, size, accent):
+    def __init__(self, size, accent, quality=1.25):
         super().__init__()
         self.base_size = size
         self.S = size
-        self._resize()
+        self.quality = max(1.0, min(2.0, float(quality)))
+        self.detail = 1.0
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.PointingHandCursor)
         self.state, self.emotion = "idle", "neutral"
-        self.level = self.target_level = self.spike = self.pulse = 0.0
+        self.level = self.target_level = 0.0
+        self.bands = None
+        self._pulse = 0.0
         self._last_level = 0.0
-        self.col = QColor(BASE)
-        self.target_col = QColor(BASE)
-        rng = random.Random(7)
-        self.rng = rng
-        self.parts = [[rng.uniform(-1, 1), rng.random(), rng.uniform(0.05, 0.18), rng.uniform(2.0, 5.0),
-                       rng.random() * 6.283] for _ in range(self.NPART)]
-        self.sp_phase = [rng.random() * 6.283 for _ in range(self.NSPIKE)]
-        self.ring_phase = [0.0, 120.0, 240.0]
-        self.t0 = self.last = time.monotonic()
+        self._ms, self._frames = 0.0, 0
+        self._resize()
+        self._build_holo()
+        self.last = time.monotonic()
         self._press = None
         self._moved = False
         self.timer = QTimer(self)
@@ -101,53 +98,53 @@ class OrbWidget(QWidget):
         self.timer.start(33)
 
     def _resize(self):
-        self.setFixedSize(int(self.S * 2.1), int(self.S * 2.5))
+        self.setFixedSize(int(self.S * 2.1), int(self.S * 2.4))
+
+    def _build_holo(self):
+        q = self.quality
+        self.holo = Hologram(int(self.width() * q), int(self.height() * q), self.S * q * 0.30, detail=self.detail)
+        self.holo.set_tint(self._tint())
+        self._img = None
+
+    def _tint(self):
+        c = QColor(EMOTIONS[self.emotion][2])
+        return (c.redF(), c.greenF(), c.blueF())
 
     def set_scale(self, k):
         self.S = self.base_size * k
         self._resize()
+        self._build_holo()
 
     # ----- control -----
     def set_state(self, state):
         self.state = state
-        self._retarget()
 
     def set_emotion(self, emotion):
         if emotion in EMOTIONS:
             self.emotion = emotion
-            self._retarget()
+            self.holo.set_tint(self._tint())
 
-    def _retarget(self):
-        self.target_col = QColor(GREY) if self.state == "muted" else lerp(BASE, QColor(EMOTIONS[self.emotion][2]), 0.3)
-
-    def set_level(self, v):
+    def set_level(self, v, bands=None):
         self.target_level = max(0.0, min(1.0, v))
+        self.bands = bands
         self._last_level = time.monotonic()
 
     def hear(self):
-        self.pulse = 1.0
+        self._pulse = 1.0
 
     def _tick(self):
         now = time.monotonic()
-        dt = min(0.1, now - self.last)
+        dt = now - self.last
         self.last = now
-        if now - self._last_level > 0.25:
+        fresh = now - self._last_level < 0.25
+        if not fresh:
             self.target_level *= 0.75
+            self.bands = None
         if self.state == "speaking" and now - self._last_level > 0.3:       # built-in voice: synthetic rhythm
             self.target_level = 0.35 + 0.3 * abs(math.sin(now * 7.0))
-        self.level += (self.target_level - self.level) * (0.55 if self.target_level > self.level else 0.18)
-        want = self.level if self.state in ("speaking", "listening") else 0.0
-        self.spike += (want - self.spike) * (0.6 if want > self.spike else 0.12)
-        fac = {"thinking": 4.0, "speaking": 1.7, "listening": 1.3}.get(self.state, 1.0)
-        for i, sp in enumerate((14.0, -9.0, 22.0)):
-            self.ring_phase[i] = (self.ring_phase[i] + sp * fac * dt) % 360
-        for pt in self.parts:
-            pt[1] += pt[2] * (1 + 3 * self.level + (1.5 if self.state == "thinking" else 0)) * dt
-            if pt[1] > 1:
-                pt[1] -= 1
-                pt[0] = self.rng.uniform(-1, 1)
-        self.pulse *= 0.9
-        self.col = lerp(self.col, self.target_col, 0.08)
+        self.level = self.target_level
+        self.holo.update(dt, self.state, self.level, self.bands if fresh else None, self._pulse)
+        self._pulse = 0.0
         self.update()
 
     # ----- mouse: click toggles the panel, drag moves the orb -----
@@ -173,214 +170,26 @@ class OrbWidget(QWidget):
                 self.clicked.emit()
             self._press = None
 
-    # ----- painting helpers -----
-    def _platform(self, p, x, y, R, t, col, lvl, A):
-        p.save()
-        p.translate(x, y)
-        p.scale(1, 0.2)
-        g = QRadialGradient(QPointF(0, 0), R * 2.5)
-        g.setColorAt(0, rgba(ICE, A(150 + 80 * lvl)))
-        g.setColorAt(0.35, rgba(col, A(95)))
-        g.setColorAt(1, rgba(col, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(g)
-        p.drawEllipse(QPointF(0, 0), R * 2.5, R * 2.5)
-        p.setBrush(Qt.NoBrush)
-        for i, (rr, al) in enumerate(((1.0, 210), (1.55, 140), (2.1, 85))):
-            p.setPen(cpen(rgba(ICE if i == 0 else col, A(al)), 2.0 if i == 0 else 1.3))
-            p.drawEllipse(QPointF(0, 0), R * rr, R * rr)
-        for k in range(3):
-            ph = (t * 0.55 + k / 3) % 1
-            p.setPen(cpen(rgba(col, A((1 - ph) * (70 + 170 * lvl))), 1.5))
-            p.drawEllipse(QPointF(0, 0), R * (0.7 + ph * 2.3), R * (0.7 + ph * 2.3))
-        p.restore()
-
-    def _beam(self, p, c, yb, R, col, A, lvl):
-        top = c.y()
-        g = QLinearGradient(c.x(), yb, c.x(), top)
-        g.setColorAt(0, rgba(col, A(75 + 60 * lvl)))
-        g.setColorAt(1, rgba(col, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(g)
-        p.drawRect(QRectF(c.x() - R * 0.5, top, R, yb - top))
-        for i in range(-2, 3):
-            x = c.x() + i * R * 0.2
-            g2 = QLinearGradient(x, yb, x, top)
-            g2.setColorAt(0, rgba(ICE, A(95)))
-            g2.setColorAt(1, rgba(ICE, 0))
-            p.setPen(QPen(QBrush(g2), 1.0))
-            p.drawLine(QPointF(x, yb), QPointF(x, top))
-
-    def _particles(self, p, c, yb, R, t, col, A):
-        top = c.y() - R * 2.4
-        scale = self.S / 120.0
-        p.setPen(Qt.NoPen)
-        for px, py, _, sz, ph in self.parts:
-            x = c.x() + px * R * 1.8
-            y = yb - py * (yb - top)
-            a = A(210 * math.sin(py * math.pi) * (0.6 + 0.4 * math.sin(t * 3 + ph)))
-            p.fillRect(QRectF(x, y, sz * scale, sz * scale), rgba(ICE if ph > 3.5 else col.lighter(150), a))
-
-    def _spikes(self, p, c, R, t, A, sp):
-        st, n = self.state, self.NSPIKE
-        p.setPen(Qt.NoPen)
-        for i in range(n):
-            a = i * 2 * math.pi / n + t * 0.12
-            wob = 0.35 + 0.65 * abs(math.sin(t * 9.0 + self.sp_phase[i]))
-            if st in ("speaking", "listening"):
-                amp = sp * wob
-            elif st == "thinking":
-                amp = 0.12 + 0.12 * math.sin(t * 5 + i * 0.6) ** 2
-            else:
-                amp = 0.0
-            L = R * (0.07 + 1.4 * amp)
-            r0, hw = R * 1.1, 0.026 + 0.02 * amp
-            pts = [QPointF(c.x() + math.cos(a - hw) * r0, c.y() + math.sin(a - hw) * r0),
-                   QPointF(c.x() + math.cos(a) * (r0 + L), c.y() + math.sin(a) * (r0 + L)),
-                   QPointF(c.x() + math.cos(a + hw) * r0, c.y() + math.sin(a + hw) * r0)]
-            p.setBrush(rgba(ICE, A(70 + 175 * amp)))
-            p.drawPolygon(QPolygonF(pts))
-
-    def _blade(self, p, c, R, up, length, width, col, alpha, rot=0.0):
-        sgn = -1 if up else 1
-        p.save()
-        p.translate(c)
-        p.rotate(rot)
-        tip = QPointF(0, sgn * length)
-        left, right = QPointF(-width, sgn * R * 1.55), QPointF(width * 0.85, sgn * R * 1.4)
-        base = QPointF(0, sgn * R * 0.5)
-        g = QLinearGradient(0, sgn * R * 0.5, 0, sgn * length)
-        g.setColorAt(0, rgba(col, alpha * 0.10))
-        g.setColorAt(0.55, rgba(col, alpha * 0.42))
-        g.setColorAt(1, rgba(ICE, alpha))
-        p.setBrush(g)
-        p.setPen(cpen(rgba(ICE, alpha), 1.2))
-        p.drawPolygon(QPolygonF([base, left, tip, right]))
-        p.setPen(cpen(rgba(QColor(255, 255, 255), alpha * 0.55), 0.8))
-        p.drawLine(base, tip)
-        p.drawLine(QPointF(-width * 0.45, sgn * R * 0.97), tip)
-        p.restore()
-
-    def _ring(self, p, c, rx, ry, angle, w, col, alpha, phase):
-        p.save()
-        p.translate(c)
-        p.rotate(angle)
-        cg = QConicalGradient(0, 0, phase)
-        cg.setColorAt(0.0, rgba(QColor(255, 255, 255), alpha))
-        cg.setColorAt(0.28, rgba(col, alpha * 0.22))
-        cg.setColorAt(0.55, rgba(VIOLET, alpha * 0.85))
-        cg.setColorAt(0.8, rgba(col, alpha * 0.22))
-        cg.setColorAt(1.0, rgba(QColor(255, 255, 255), alpha))
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QBrush(cg), w))
-        p.drawEllipse(QPointF(0, 0), rx, ry)
-        p.setPen(QPen(QBrush(cg), w * 0.5))
-        p.drawEllipse(QPointF(0, 0), rx * 0.965, ry * 0.88)
-        p.restore()
-
-    def _star(self, p, c, L, w, rot, alpha):
-        pts = []
-        for k in range(8):
-            a = math.radians(rot + k * 45)
-            r = L if k % 2 == 0 else w
-            pts.append(QPointF(c.x() + math.cos(a) * r, c.y() + math.sin(a) * r))
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(235, 247, 255, int(alpha)))
-        p.drawPolygon(QPolygonF(pts))
-
-    # ----- paint -----
+    # ----- paint: the hologram is rendered to one image per frame -----
     def paintEvent(self, _):
+        t0 = time.perf_counter()
+        arr = self.holo.render()
+        h, w = arr.shape[:2]
+        img = QImage(arr.data, w, h, w * 4, QImage.Format_ARGB32_Premultiplied)
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        R = self.S * 0.30
-        c = QPointF(self.width() / 2, self.height() * 0.48)
-        t = time.monotonic() - self.t0
-        st, col, lvl, sp = self.state, self.col, self.level, self.spike
-        muted, think = st == "muted", st == "thinking"
-        dim = 0.45 if muted else 1.0
-
-        def A(x):
-            return max(0, min(255, int(x * dim)))
-        yb = c.y() + R * 2.5
-        breathe = 1 + 0.025 * math.sin(t * 1.6)
-
-        g = QRadialGradient(c, R * 3.4)                                         # ambient glow
-        g.setColorAt(0, rgba(col, A(70 + 110 * sp + 30 * self.pulse)))
-        g.setColorAt(0.5, rgba(col, A(22 + 30 * sp)))
-        g.setColorAt(1, rgba(col, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(g)
-        p.drawEllipse(c, R * 3.4, R * 3.4)
-
-        self._platform(p, c.x(), yb, R, t, col, lvl, A)
-        self._beam(p, c, yb, R, col, A, lvl)
-        self._particles(p, c, yb, R, t, col, A)
-
-        top_len = R * (2.45 + 1.15 * sp + 0.25 * self.pulse) * breathe             # crystal blades
-        bot_len = R * (2.0 + 0.8 * sp) * breathe
-        self._blade(p, c, R, True, top_len * 0.9, R * 0.34, col, A(105), -6)
-        self._blade(p, c, R, True, top_len * 0.86, R * 0.32, col, A(105), 7)
-        self._blade(p, c, R, True, top_len, R * 0.44, col, A(215))
-        self._blade(p, c, R, False, bot_len * 0.88, R * 0.32, col, A(100), 6)
-        self._blade(p, c, R, False, bot_len, R * 0.42, col, A(205))
-        side = R * (1.15 + 0.55 * sp)
-        self._blade(p, c, R, True, side, R * 0.17, col, A(150), 90)
-        self._blade(p, c, R, True, side, R * 0.17, col, A(150), -90)
-
-        self._spikes(p, c, R, t, A, sp)
-
-        wob = 1 + 0.05 * lvl * math.sin(t * 14)                                  # orbital rings
-        spin = 1 + 0.02 * math.sin(t * 2)
-        self._ring(p, c, R * 2.7 * wob, R * 0.72 * spin, 13 + 6 * math.sin(t * 0.5), 2.6, col, A(235), self.ring_phase[0])
-        self._ring(p, c, R * 2.25 * wob, R * 0.56 * spin, -25 + 8 * math.sin(t * 0.37 + 1), 2.2, col, A(210),
-                   self.ring_phase[1])
-        self._ring(p, c, R * 1.75, R * 0.42, self.ring_phase[2] * 0.5 + 60, 1.8, col, A(190), self.ring_phase[2])
-        self._ring(p, QPointF(c.x(), c.y() - top_len * 0.97), R * 1.35, R * 0.28, 0, 2.0, col, A(200),
-                   self.ring_phase[1] + 90)                                       # halo above the tip
-
-        if st == "listening":                                                    # contracting attention rings
-            p.setBrush(Qt.NoBrush)
-            for k in range(3):
-                ph = (t * 0.9 + k / 3) % 1
-                p.setPen(cpen(rgba(ICE, A(ph * (60 + 130 * lvl))), 1.4))
-                p.drawEllipse(c, R * (2.1 - 1.0 * ph), R * (2.1 - 1.0 * ph))
-
-        cg = QRadialGradient(QPointF(c.x() - R * 0.3, c.y() - R * 0.35), R * 1.5)   # glass core
-        cg.setColorAt(0, QColor(46, 80, 170))
-        cg.setColorAt(0.6, QColor(10, 22, 62))
-        cg.setColorAt(1, QColor(5, 11, 34))
-        p.setPen(Qt.NoPen)
-        p.setBrush(cg)
-        p.drawEllipse(c, R * breathe, R * breathe)
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(rgba(col.lighter(170), A(235)), max(2.0, R * 0.07)))
-        p.drawEllipse(c, R * breathe, R * breathe)
-        p.setPen(QPen(rgba(ICE, A(110)), 1.2))
-        p.drawEllipse(c, R * 0.84, R * 0.84)
-        ig = QRadialGradient(c, R * 0.95)
-        ig.setColorAt(0, rgba(QColor(255, 255, 255), A(130 + 110 * sp)))
-        ig.setColorAt(0.5, rgba(col, A(70 + 60 * sp)))
-        ig.setColorAt(1, rgba(col, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(ig)
-        p.drawEllipse(c, R * 0.95, R * 0.95)
-
-        L = R * (0.60 + 0.05 * math.sin(t * 1.6) + 0.75 * sp + 0.18 * self.pulse)    # the star
-        rot = (t * 40) % 360 if think else 0
-        self._star(p, c, L * 0.5, R * 0.1, rot + 45, A(190))
-        self._star(p, c, L, R * 0.12, rot, A(250))
-        p.setBrush(QColor(255, 255, 255, A(255)))
-        p.drawEllipse(c, R * 0.07, R * 0.07)
-
-        if think:                                                                 # scan line
-            y = c.y() + math.sin(t * 2.4) * R * 1.9
-            sg = QLinearGradient(c.x() - R, y, c.x() + R, y)
-            sg.setColorAt(0, rgba(ICE, 0))
-            sg.setColorAt(0.5, rgba(ICE, A(190)))
-            sg.setColorAt(1, rgba(ICE, 0))
-            p.setPen(QPen(QBrush(sg), 1.6))
-            p.drawLine(QPointF(c.x() - R, y), QPointF(c.x() + R, y))
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.drawImage(self.rect(), img)
         p.end()
+        self._ms = self._ms * 0.9 + (time.perf_counter() - t0) * 1000 * 0.1
+        self._frames += 1
+        if self._frames % 60 == 0 and self._ms > 30:            # a slow computer: trade detail for smoothness
+            if self.quality > 1.0:
+                self.quality = 1.0
+                self._build_holo()
+            elif self.detail > 0.6:
+                self.detail = 0.6
+                self._build_holo()
+            self._ms = 0.0
 
 
 # =====================================================================================================
@@ -886,7 +695,7 @@ class Overlay(QWidget):
         self.setWindowOpacity(float(u.get("opacity", 0.98)))
         self.setWindowTitle(self.name)
 
-        self.orb = OrbWidget(int(u.get("orb_size", 130)), self.accent)
+        self.orb = OrbWidget(int(u.get("orb_size", 150)), self.accent, u.get("quality", 1.25))
         self.caption = QLabel("")
         self.caption.setWordWrap(True)
         self.caption.hide()
@@ -1032,7 +841,7 @@ class Overlay(QWidget):
             self.orb.set_state(self._state)
             self.panel.set_state(self._state, self._mood_text or self._emotion)
         elif kind == "level":
-            self.orb.set_level(d["value"])
+            self.orb.set_level(d["value"], d.get("bands"))
             self.panel.bars.set_level(d["value"])
         elif kind == "hearing":
             self.orb.hear()
