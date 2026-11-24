@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Orion Companion",
+  "version": "1.0.0",
+  "description": "Lets your local Orion assistant see your open tabs, and read a tab only when you choose it in Orion's + menu. Talks only to 127.0.0.1.",
+  "permissions": ["tabs", "scripting", "storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Orion Companion", "default_popup": "popup.html" }
+}

@@ -1,39 +1,73 @@
-# Orion configuration. Edit freely.
+# Orion configuration. Edit freely. Restart Orion after changes.
 assistant_name: Orion
-user_name: ""            # your name, so Orion can address you
+user_name: ""            # your name; Orion also learns it from you
+home_city: ""            # used later for weather and local questions
 
 brain:
   provider: auto         # auto | anthropic | ollama | openai_compatible
-                         # auto = Anthropic if ANTHROPIC_API_KEY is set, else local Ollama
+                         # auto = Claude API if ANTHROPIC_API_KEY is set, else local Ollama
+  fallback: [ollama]     # tried in order if the main brain is unreachable
   anthropic_model: claude-sonnet-5-5
+  anthropic_fast_model: claude-haiku-5-5   # cheaper model for memory upkeep (blank = same)
   ollama_model: llama3.1:8b
+  ollama_fast_model: ""
   ollama_url: http://localhost:11434
-  openai_base_url: https://api.groq.com/openai/v1   # any OpenAI-compatible endpoint
+  openai_base_url: https://api.groq.com/openai/v1
   openai_model: llama-3.3-70b-versatile
-  max_tokens: 1024
-
-voice:
-  enabled: false         # true = talk with Orion; false = type in the terminal
-  wake_word: orion
-  stt_model: base.en     # faster-whisper model: tiny.en, base.en, small.en...
-  tts: edge              # edge (natural, needs internet) | pyttsx3 (offline, robotic)
-  tts_voice: en-GB-RyanNeural
-  silence_threshold: 0.015
+  openai_fast_model: ""
+  max_tokens: 1200
+  temperature: null      # e.g. 0.8 for more playful variety; null = provider default
+  reasoning: true        # Orion thinks briefly before answering (smarter, slightly slower)
+  retries: 2
 
 personality:
-  traits: "warm, witty, loyal, a little cheeky, endlessly curious, calm under pressure"
-  style: "concise and natural, like a close friend who is also a brilliant assistant"
+  traits: "warm, witty, loyal, quietly confident, endlessly curious, calm under pressure"
+  baseline: {warmth: 0.8, humor: 0.6, directness: 0.6, formality: 0.3, curiosity: 0.8}
+  evolve: true             # his tuning drifts slowly toward what you respond well to
+  mirror_user_style: true  # gently matches how you talk
+  greet_with_brain: true   # a personal greeting at startup (one small model call)
 
-home_city: ""            # used when you say "the weather" without a city
+voice:
+  speak: true              # Orion talks out loud
+  listen: false            # microphone on (also: python main.py --voice)
+  wake_word: orion
+  wake_aliases: [orion, orian, oryan, o'ryan]   # spellings the speech recognizer may produce
+  conversation_window: 25  # seconds after he speaks that you can reply without saying his name
+  stt_model: base.en       # faster-whisper: tiny.en, base.en, small.en (more accurate, slower)
+  stt_language: en
+  silence_threshold: 0.015
+  tts: edge                # edge (natural, free, internet) | elevenlabs (most human) | piper (offline neural) | pyttsx3 (basic)
+  edge_voice: en-GB-RyanNeural    # try en-US-GuyNeural, en-US-AriaNeural, en-GB-SoniaNeural, en-US-AndrewNeural
+  elevenlabs_voice_id: ""         # needs ELEVENLABS_API_KEY in .env
+  elevenlabs_model: eleven_multilingual_v2
+  piper_model: ""                 # path to a .onnx voice file
+  piper_bin: piper
+  expressive: true         # emotion changes pace, pitch and volume
+  fillers: true            # rare natural "hmm", "well" when he is thinking or amused
+
+ui:
+  enabled: true
+  corner: bottom-right     # top-left | top-right | bottom-left | bottom-right (drag the core to move it)
+  orb_size: 130            # bigger number = bigger hologram
+  margin: 24
+  opacity: 0.98
+  accent: "#5aa8ff"        # colour of your message bubbles
+  captions: true           # live subtitles of what he says
+  start_expanded: false
+
+bridge:                    # lets the browser extension share your tab list with Orion (localhost only)
+  enabled: true
+  port: 8765
 
 learning:
   reflect_every: 8         # review the conversation every N turns (0 = only on exit)
-                           # each review is one extra model call; raise this if API cost matters
-  reflect_on_exit: true    # also save lessons when you say goodbye
-  consolidate_above: 120   # tidy memory once it holds more than this many facts
+                           # each review costs one small model call; raise this to save money
+  reflect_on_exit: true
+  consolidate_above: 120   # tidy memory once it holds more facts than this
+  profile_every_reflections: 3   # how often he updates his picture of who you are
 
-safety:
-  confirm_screen_control: true   # ask before mouse/keyboard actions
-  confirm_shell: true            # ask before shell commands
-  confirm_claude_code: true      # ask before handing a coding job to Claude Code
-  workspace: ./workspace         # where Orion reads/writes files and code
+safety:                    # used by the tool parts coming next
+  confirm_screen_control: true
+  confirm_shell: true
+  confirm_claude_code: true
+  workspace: ./workspace

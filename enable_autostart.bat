@@ -3,9 +3,8 @@ set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 (
 echo @echo off
 echo cd /d "%~dp0"
-echo call venv\Scripts\activate
-echo python main.py --voice
+echo start "" "%~dp0venv\Scripts\pythonw.exe" main.py --voice
 ) > "%STARTUP%\Orion.bat"
-echo Orion will now start in voice mode every time you log in.
+echo Orion will now appear in the corner of your screen, listening, every time you log in.
 echo To undo: delete "%STARTUP%\Orion.bat"
 pause

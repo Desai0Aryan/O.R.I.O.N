@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  body { font: 13px system-ui, sans-serif; width: 270px; padding: 14px; background: #0a1228; color: #dbe8ff; }
+  h1 { font-size: 15px; margin: 0 0 4px; letter-spacing: 3px; color: #7fc8ff; }
+  p { margin: 6px 0 10px; color: #9fb4d8; line-height: 1.4; }
+  label { display: block; margin: 8px 0 3px; font-size: 11px; color: #8ea6cf; }
+  input { width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 6px; border: 1px solid #2a4f9a;
+          background: #060c1e; color: #fff; }
+  button { margin-top: 12px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: #4a9bff;
+           color: #04112b; font-weight: 600; cursor: pointer; }
+  #msg { margin-top: 8px; font-size: 12px; min-height: 16px; }
+</style></head>
+<body>
+  <h1>ORION</h1>
+  <p>Paste the token from Orion (type <b>/token</b> in Orion's chat). It stays on this computer.</p>
+  <label>Token</label><input id="token" type="password" autocomplete="off">
+  <label>Port</label><input id="port" type="number" value="8765">
+  <button id="save">Save and connect</button>
+  <div id="msg"></div>
+  <script src="popup.js"></script>
+</body></html>
